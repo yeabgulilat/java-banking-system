@@ -1,6 +1,9 @@
 package com.habeshabank.ui.login;
 
+import com.habeshabank.exception.AuthenticationException;
+import com.habeshabank.exception.BankingException;
 import com.habeshabank.model.UserSession;
+import com.habeshabank.service.AuthService;
 import com.habeshabank.ui.components.*;
 import com.habeshabank.ui.dashboard.MainFrame;
 import com.habeshabank.ui.theme.HabeshaTheme;
@@ -256,7 +259,7 @@ public class LoginFrame extends JFrame {
         form.add(Box.createVerticalGlue());
 
         // Demo hint
-        JLabel demoHint = new JLabel("Demo: any account number + any password");
+        JLabel demoHint = new JLabel("Demo: ETH-2026-00142  /  demo1234");
         demoHint.setFont(new Font("Segoe UI", Font.ITALIC, 10));
         demoHint.setForeground(HabeshaTheme.BLACK_BORDER);
         demoHint.setAlignmentX(Component.LEFT_ALIGNMENT);
@@ -278,7 +281,7 @@ public class LoginFrame extends JFrame {
         return lbl;
     }
 
-    // ── Login Logic (UI-only demo) ────────────────────────────────────────────
+    // ── Login Logic ───────────────────────────────────────────────────────────
 
     private void attemptLogin() {
         String account  = accountField.getText().trim();
@@ -297,15 +300,24 @@ public class LoginFrame extends JFrame {
         statusLabel.setForeground(HabeshaTheme.GOLD_MUTED);
         statusLabel.setText("Authenticating…");
 
-        // Simulate async auth with a short delay
-        Timer timer = new Timer(800, e -> {
-            // Load demo session (database integration comes later)
-            UserSession session = UserSession.getInstance();
-            session.loadDemoUser();
-            if (!account.equals("ETH-2024-00142")) {
-                session.setAccountNumber(account);
+        // Snapshot password chars before the Timer closure captures them;
+        // AuthService will wipe them from memory after verification.
+        final char[] passwordSnapshot = password.clone();
+
+        Timer timer = new Timer(600, e -> {
+            try {
+                // Phase 2: real auth through AuthService
+                AuthService.getInstance().authenticate(account, passwordSnapshot);
+
+            } catch (BankingException authEx) {
+                // Auth failed — restore UI and show error
+                loginButton.setEnabled(true);
+                statusLabel.setForeground(HabeshaTheme.RED_DANGER);
+                statusLabel.setText(authEx.getMessage());
+                return;
             }
 
+            // Auth succeeded — open dashboard
             dispose();
             MainFrame mainFrame = new MainFrame();
             mainFrame.setVisible(true);
