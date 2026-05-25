@@ -1,6 +1,7 @@
 package com.habeshabank.ui.dashboard;
 
 import com.habeshabank.model.UserSession;
+import com.habeshabank.ui.Refreshable;
 import com.habeshabank.ui.components.*;
 import com.habeshabank.ui.deposit.DepositPanel;
 import com.habeshabank.ui.equb.EqubPanel;
@@ -211,6 +212,20 @@ public class MainFrame extends JFrame {
     }
 
     // ── Navigation ────────────────────────────────────────────────────────────
+
+    /**
+     * Refreshes every content panel that implements {@link Refreshable}
+     * (balance cards, equb counts, iddir totals, etc.) after a transaction.
+     */
+    public void refreshAllUI() {
+        for (Component comp : contentArea.getComponents()) {
+            if (comp instanceof Refreshable refreshable) {
+                refreshable.refreshData();
+            }
+        }
+        contentArea.revalidate();
+        contentArea.repaint();
+    }
 
     public void navigateTo(String pageKey) {
         activePage = pageKey;

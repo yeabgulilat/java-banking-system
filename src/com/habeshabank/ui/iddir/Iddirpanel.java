@@ -1,5 +1,10 @@
 package com.habeshabank.ui.iddir;
 
+import com.habeshabank.exception.BankingException;
+import com.habeshabank.model.Transaction;
+import com.habeshabank.model.UserSession;
+import com.habeshabank.service.TransactionService;
+import com.habeshabank.ui.Refreshable;
 import com.habeshabank.ui.components.*;
 import com.habeshabank.ui.dashboard.MainFrame;
 import com.habeshabank.ui.theme.HabeshaTheme;
@@ -9,15 +14,23 @@ import javax.swing.table.DefaultTableModel;
 import java.awt.*;
 
 /**
- * Iddir (mutual-aid funeral association) contribution simulation panel.
- * UI shell — business logic to be wired later.
+ * Iddir (mutual-aid funeral association) contribution panel.
+ * Phase 3: implements Refreshable — refreshData() updates the "My Contributions"
+ *          StatCard from TransactionService live data.
+ *          handleContribution() now delegates to TransactionService (removing the
+ *          stale manual balance check from Phase 1).
+ *          All layout, styling, and field structure unchanged.
  */
-public class IddirPanel extends JPanel {
+public class IddirPanel extends JPanel implements Refreshable {
 
     private final MainFrame mainFrame;
+    private final TransactionService txService = TransactionService.getInstance();
     private HabeshaTextField memberField;
     private HabeshaTextField amountField;
     private JComboBox<String> purposeCombo;
+
+    // Phase 3: promoted to fields so refreshData() can update them
+    private StatCard myContribCard;
 
     public IddirPanel(MainFrame mainFrame) {
         this.mainFrame = mainFrame;
@@ -25,6 +38,23 @@ public class IddirPanel extends JPanel {
         setBackground(HabeshaTheme.BLACK_DEEP);
         setLayout(new BorderLayout());
         add(buildScrollableContent(), BorderLayout.CENTER);
+    }
+
+    // ── Refreshable ───────────────────────────────────────────────────────────
+
+    /**
+     * Updates "My Contributions" StatCard from live TransactionService data.
+     * Members count and pool balance remain static until group management is built.
+     */
+    @Override
+    public void refreshData() {
+        if (myContribCard != null) {
+            double total = txService.getTotalIddirContributions();
+            myContribCard.setValue(total > 0
+                    ? String.format("%,.2f ETB", total)
+                    : "0.00 ETB");
+            myContribCard.repaint();
+        }
     }
 
     private JScrollPane buildScrollableContent() {
@@ -152,11 +182,12 @@ public class IddirPanel extends JPanel {
         panel.add(poolCard);
         panel.add(Box.createVerticalStrut(12));
 
-        StatCard myCard = new StatCard("My Contributions", "1,800 ETB",
-                "Total paid this year", HabeshaTheme.BLUE_INFO);
-        myCard.setAlignmentX(Component.LEFT_ALIGNMENT);
-        myCard.setMaximumSize(new Dimension(Integer.MAX_VALUE, 120));
-        panel.add(myCard);
+        // "My Contributions" — promoted to field so refreshData() can update it
+        myContribCard = new StatCard("My Contributions", "0.00 ETB",
+                "Total paid this session", HabeshaTheme.BLUE_INFO);
+        myContribCard.setAlignmentX(Component.LEFT_ALIGNMENT);
+        myContribCard.setMaximumSize(new Dimension(Integer.MAX_VALUE, 120));
+        panel.add(myContribCard);
 
         return panel;
     }
@@ -208,16 +239,24 @@ public class IddirPanel extends JPanel {
         if (amountField.getText().trim().isEmpty())  { showError("Please enter an amount."); return; }
 
         try {
-            double amount = Double.parseDouble(amountField.getText().trim().replace(",", ""));
-            if (amount <= 0) { showError("Amount must be positive."); return; }
+            double amount  = Double.parseDouble(amountField.getText().trim().replace(",", ""));
+            String purpose = (String) purposeCombo.getSelectedItem();
+
+            Transaction tx = txService.iddirContribution(
+                    amount, memberField.getText().trim(), purpose);
 
             JOptionPane.showMessageDialog(this,
-                    String.format("✓  Iddir contribution of %.2f ETB recorded for %s.",
-                            amount, memberField.getText().trim()),
+                    String.format("✓  Iddir contribution of %.2f ETB recorded for %s.\nRef: %s",
+                            amount, memberField.getText().trim(), tx.getReferenceNumber()),
                     "Contribution Recorded", JOptionPane.INFORMATION_MESSAGE);
+
             clearForm();
+            mainFrame.refreshAllUI();   // sync dashboard + history
+
         } catch (NumberFormatException ex) {
             showError("Invalid amount.");
+        } catch (BankingException ex) {
+            showError(ex.getMessage());
         }
     }
 

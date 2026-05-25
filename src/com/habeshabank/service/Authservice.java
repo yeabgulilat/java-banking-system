@@ -5,39 +5,32 @@ import com.habeshabank.exception.ValidationException;
 import com.habeshabank.model.Account;
 import com.habeshabank.model.User;
 import com.habeshabank.model.UserSession;
+import com.habeshabank.repository.AccountRepository;
+import com.habeshabank.repository.SqliteAccountRepository;
+import com.habeshabank.repository.SqliteUserRepository;
+import com.habeshabank.repository.UserRepository;
 import com.habeshabank.util.AccountNumberGenerator;
 import com.habeshabank.util.PasswordUtil;
 
-import java.util.HashMap;
-import java.util.Map;
 import java.util.Optional;
 
 /**
  * Handles authentication, session lifecycle, and user/account registration.
  *
- * Architecture notes
- * ──────────────────
- * • In this phase, users and accounts are held in in-memory Maps that act as
- *   stub repositories.  Each Map will be replaced by a repository interface
- *   backed by SQLite in the next phase — the method signatures here will not
- *   change.
- * • AuthService is the sole entry point for login/logout.  UI classes call
- *   {@link #authenticate} and read the result from {@link UserSession}.
- * • Password hashing is delegated to {@link PasswordUtil} — AuthService never
- *   handles plain-text passwords beyond the single call to verify().
- *
- * Demo seeding
- * ────────────
- * The constructor pre-registers one demo user so the existing LoginFrame demo
- * hint ("any account number + any password") keeps working during development.
+ * Phase 4 changes
+ * ───────────────
+ * • In-memory Maps replaced by {@link UserRepository} and {@link AccountRepository}.
+ * • All user/account state is now read from and written to SQLite on every call.
+ * • seedDemoUser() removed — seeding is handled by {@link com.habeshabank.database.DatabaseSeeder}.
+ * • Public API (authenticate, logout, register) signatures are unchanged —
+ *   no UI class needs modification.
  */
 public class AuthService {
 
-    // ── Stub repositories (replaced by SQLite repos later) ────────────────────
+    // ── Repositories ──────────────────────────────────────────────────────────
 
-    private final Map<String, User>    usersByUsername = new HashMap<>();
-    private final Map<String, Account> accountsByNumber = new HashMap<>();
-    private final Map<Long, Account>   accountsByUserId = new HashMap<>();
+    private final UserRepository    userRepo;
+    private final AccountRepository accountRepo;
 
     // ── Singleton ─────────────────────────────────────────────────────────────
 
@@ -49,7 +42,8 @@ public class AuthService {
     }
 
     private AuthService() {
-        seedDemoUser();
+        this.userRepo    = new SqliteUserRepository();
+        this.accountRepo = new SqliteAccountRepository();
     }
 
     // ── Public API ────────────────────────────────────────────────────────────
@@ -66,51 +60,52 @@ public class AuthService {
             throws AuthenticationException, ValidationException {
 
         // ── Input validation ──────────────────────────────────────────────────
-        if (username == null || username.isBlank()) {
+        if (username == null || username.isBlank())
             throw new ValidationException("username", "Account number must not be empty.");
-        }
-        if (password == null || password.length == 0) {
+        if (password == null || password.length == 0)
             throw new ValidationException("password", "Password must not be empty.");
-        }
 
-        // ── User lookup ───────────────────────────────────────────────────────
-        User user = findUser(username.trim())
+        String input = username.trim();
+
+        // ── User lookup: try username first, then account number ──────────────
+        User user = findUser(input)
                 .orElseThrow(() -> new AuthenticationException(
-                        "No account found for: " + username));
+                        "No account found for: " + input));
 
         if (!user.canLogin()) {
             String reason = user.isLocked()
-                    ? "Your account has been locked after too many failed attempts. Please contact support."
+                    ? "Your account has been locked after too many failed attempts. "
+                      + "Please contact Habesha Bank support."
                     : "Your account is inactive. Please contact Habesha Bank.";
             throw new AuthenticationException(reason);
         }
 
         // ── Password check ────────────────────────────────────────────────────
         boolean match = PasswordUtil.verify(new String(password), user.getPasswordHash());
-        clearPassword(password);          // wipe from memory immediately
+        clearPassword(password);
 
         if (!match) {
             user.recordFailedLogin();
+            userRepo.update(user);          // persist lock state + failed count
             int remaining = Math.max(0, 5 - user.getFailedLoginCount());
             throw new AuthenticationException(
                     "Incorrect password. " + remaining + " attempt(s) remaining.");
         }
 
         user.recordSuccessfulLogin();
+        userRepo.update(user);              // persist last_login_at + reset failed count
 
         // ── Load account ──────────────────────────────────────────────────────
-        Account account = accountsByUserId.get(user.getId());
-        if (account == null) {
-            throw new AuthenticationException("No account linked to user: " + username);
-        }
+        Account account = accountRepo.findByUserId(user.getId())
+                .orElseThrow(() -> new AuthenticationException(
+                        "No account linked to user: " + input));
 
         // ── Populate session ──────────────────────────────────────────────────
         populateSession(user, account);
     }
 
     /**
-     * Clears the current session.
-     * Called by MainFrame logout action — no change to existing UI flow needed.
+     * Clears the current session. Called by MainFrame logout.
      */
     public void logout() {
         UserSession.clearSession();
@@ -118,7 +113,9 @@ public class AuthService {
 
     /**
      * Registers a new user and creates their default savings account.
-     * Returns the generated account number.
+     *
+     * @return the generated account number
+     * @throws ValidationException if any field is invalid or username is taken
      */
     public String register(String username, String plainPassword,
                            String fullName, String email, String phone)
@@ -126,24 +123,19 @@ public class AuthService {
 
         validateRegistrationFields(username, plainPassword, fullName, email);
 
-        if (usersByUsername.containsKey(username.toLowerCase())) {
+        if (userRepo.existsByUsername(username.toLowerCase()))
             throw new ValidationException("username", "Username already taken: " + username);
-        }
 
-        // Create User
+        // ── Create and persist User ───────────────────────────────────────────
         User user = new User(username.toLowerCase(), fullName, email, phone);
-        user.setId(usersByUsername.size() + 1L);
         user.setPasswordHash(PasswordUtil.hash(plainPassword));
-        usersByUsername.put(user.getUsername(), user);
+        userRepo.save(user);  // id assigned inside save()
 
-        // Create default savings account
+        // ── Create and persist Account ────────────────────────────────────────
         String  accountNumber = AccountNumberGenerator.next();
-        Account account       = new Account(
-                user.getId(), accountNumber,
+        Account account = new Account(user.getId(), accountNumber,
                 Account.AccountType.SAVINGS, 0.00);
-        account.setId(account.getUserId());
-        accountsByNumber.put(accountNumber, account);
-        accountsByUserId.put(user.getId(), account);
+        accountRepo.save(account);
 
         return accountNumber;
     }
@@ -151,22 +143,20 @@ public class AuthService {
     // ── Private Helpers ───────────────────────────────────────────────────────
 
     /**
-     * Looks up a user by username OR by account number — whichever matches.
-     * This mirrors the existing LoginFrame behaviour where the field label
-     * reads "Account Number / Username".
+     * Looks up a user by username OR by account number — whichever matches first.
+     * Mirrors LoginFrame's field label: "Account Number / Username".
      */
     private Optional<User> findUser(String input) {
-        // Try direct username match first
-        User byUsername = usersByUsername.get(input.toLowerCase());
-        if (byUsername != null) return Optional.of(byUsername);
+        // 1. Direct username match
+        Optional<User> byUsername = userRepo.findByUsername(input);
+        if (byUsername.isPresent()) return byUsername;
 
-        // Fall back to account number lookup
-        Account account = accountsByNumber.get(input);
-        if (account != null) {
-            return usersByUsername.values().stream()
-                    .filter(u -> u.getId() == account.getUserId())
-                    .findFirst();
+        // 2. Treat input as account number → look up account → load user
+        Optional<Account> byAccount = accountRepo.findByAccountNumber(input);
+        if (byAccount.isPresent()) {
+            return userRepo.findById(byAccount.get().getUserId());
         }
+
         return Optional.empty();
     }
 
@@ -177,8 +167,6 @@ public class AuthService {
         session.setEmail(user.getEmail());
         session.setBalance(account.getBalance());
         session.setAccountType(account.getAccountType().getDisplayName());
-
-        // Store refs for TransactionService to update the live Account object
         session.setLiveUser(user);
         session.setLiveAccount(account);
     }
@@ -186,50 +174,21 @@ public class AuthService {
     private void validateRegistrationFields(String username, String password,
                                             String fullName, String email)
             throws ValidationException {
-        if (username  == null || username.isBlank())  throw new ValidationException("username",  "Username is required.");
-        if (password  == null || password.isBlank())  throw new ValidationException("password",  "Password is required.");
-        if (fullName  == null || fullName.isBlank())  throw new ValidationException("fullName",  "Full name is required.");
-        if (email     == null || email.isBlank())     throw new ValidationException("email",     "Email is required.");
-        if (!email.contains("@"))                     throw new ValidationException("email",     "Email address appears invalid.");
-        if (password.length() < 6)                    throw new ValidationException("password",  "Password must be at least 6 characters.");
+        if (username == null || username.isBlank())
+            throw new ValidationException("username", "Username is required.");
+        if (password == null || password.isBlank())
+            throw new ValidationException("password", "Password is required.");
+        if (fullName == null || fullName.isBlank())
+            throw new ValidationException("fullName", "Full name is required.");
+        if (email    == null || email.isBlank())
+            throw new ValidationException("email", "Email is required.");
+        if (!email.contains("@"))
+            throw new ValidationException("email", "Email address appears invalid.");
+        if (password.length() < 6)
+            throw new ValidationException("password", "Password must be at least 6 characters.");
     }
 
     private void clearPassword(char[] password) {
         if (password != null) java.util.Arrays.fill(password, '\0');
-    }
-
-    // ── Demo Seeding ──────────────────────────────────────────────────────────
-
-    /**
-     * Pre-registers the demo user used during UI development.
-     * Account: ETH-2024-00142  /  Password: demo1234
-     *
-     * The LoginFrame still shows the hint "Demo: any account number + any password"
-     * but now routes through real AuthService logic; only the seeded credentials
-     * will succeed unless additional users are registered.
-     *
-     * During development you can temporarily widen this to accept any input by
-     * calling {@link UserSession#loadDemoUser()} directly from LoginFrame —
-     * that path still compiles and works unchanged.
-     */
-    private void seedDemoUser() {
-        // Seed with a fixed account number so existing demo data in UI matches
-        AccountNumberGenerator.seed(141L);   // next() will return ETH-{year}-00142
-
-        String accountNumber = AccountNumberGenerator.next();  // ETH-2024-00142 equivalent
-
-        User demo = new User("tigist.alemu", "Tigist Alemu",
-                "tigist.alemu@habeshabank.et", "+251911000001");
-        demo.setId(1L);
-        demo.setPasswordHash(PasswordUtil.hash("demo1234"));
-        usersByUsername.put(demo.getUsername(), demo);
-        // also index by account number for lookup
-        usersByUsername.put(accountNumber.toLowerCase(), demo);
-
-        Account acc = new Account(1L, accountNumber,
-                Account.AccountType.PREMIUM_SAVINGS, 47_850.00);
-        acc.setId(1L);
-        accountsByNumber.put(accountNumber, acc);
-        accountsByUserId.put(1L, acc);
     }
 }

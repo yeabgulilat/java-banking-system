@@ -103,6 +103,8 @@ public class User {
     public void setNationalIdNumber(String nationalIdNumber){ this.nationalIdNumber = nationalIdNumber; }
     public void setActive(boolean active)                  { this.active = active; }
     public void setLocked(boolean locked)                  { this.locked = locked; }
+    /** Used only by repositories to restore persisted state — never call from business logic. */
+    public void setFailedLoginCount(int count)             { this.failedLoginCount = count; }
     public void setCreatedAt(LocalDateTime createdAt)      { this.createdAt = createdAt; }
     public void setLastLoginAt(LocalDateTime lastLoginAt)  { this.lastLoginAt = lastLoginAt; }
 

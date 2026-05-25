@@ -123,6 +123,8 @@ public class Account {
     public void setBalance(double balance)                 { this.balance = balance; }
     public void setCurrency(String currency)               { this.currency = currency; }
     public void setOpenedAt(LocalDateTime openedAt)        { this.openedAt = openedAt; }
+    /** Used only by repositories to restore persisted state. */
+    public void setLastTransactionAt(LocalDateTime t)      { this.lastTransactionAt = t; }
 
     @Override
     public String toString() {

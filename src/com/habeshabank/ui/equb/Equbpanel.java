@@ -1,5 +1,9 @@
 package com.habeshabank.ui.equb;
 
+import com.habeshabank.exception.BankingException;
+import com.habeshabank.model.Transaction;
+import com.habeshabank.service.TransactionService;
+import com.habeshabank.ui.Refreshable;
 import com.habeshabank.ui.components.*;
 import com.habeshabank.ui.dashboard.MainFrame;
 import com.habeshabank.ui.theme.HabeshaTheme;
@@ -9,12 +13,18 @@ import javax.swing.table.DefaultTableModel;
 import java.awt.*;
 
 /**
- * Digital Equb (rotating savings group) management panel.
- * UI shell — business logic to be wired later.
+ * Digital Equb panel.
+ * Phase 3: implements Refreshable — refreshData() updates the live contribution
+ *          count label from TransactionService after every contribution.
+ *          All group card layout and static table content unchanged.
  */
-public class EqubPanel extends JPanel {
+public class EqubPanel extends JPanel implements Refreshable {
 
     private final MainFrame mainFrame;
+    private final TransactionService txService = TransactionService.getInstance();
+
+    // Phase 3: live label updated by refreshData()
+    private JLabel equbCountLabel;
 
     public EqubPanel(MainFrame mainFrame) {
         this.mainFrame = mainFrame;
@@ -22,6 +32,17 @@ public class EqubPanel extends JPanel {
         setBackground(HabeshaTheme.BLACK_DEEP);
         setLayout(new BorderLayout());
         add(buildScrollableContent(), BorderLayout.CENTER);
+    }
+
+    // ── Refreshable ───────────────────────────────────────────────────────────
+
+    /** Updates the live contribution count so the panel reflects real totals. */
+    @Override
+    public void refreshData() {
+        if (equbCountLabel != null) {
+            long count = txService.getEqubContributionCount();
+            equbCountLabel.setText("Total contributions this session: " + count);
+        }
     }
 
     private JScrollPane buildScrollableContent() {
@@ -174,6 +195,18 @@ public class EqubPanel extends JPanel {
     }
 
     private JPanel buildJoinCreateSection() {
+        JPanel wrapper = new JPanel();
+        wrapper.setOpaque(false);
+        wrapper.setLayout(new BoxLayout(wrapper, BoxLayout.Y_AXIS));
+
+        // Live contribution count — updated by refreshData()
+        equbCountLabel = new JLabel("Total contributions this session: 0");
+        equbCountLabel.setFont(HabeshaTheme.FONT_SMALL);
+        equbCountLabel.setForeground(HabeshaTheme.GOLD_MUTED);
+        equbCountLabel.setAlignmentX(Component.LEFT_ALIGNMENT);
+        equbCountLabel.setBorder(BorderFactory.createEmptyBorder(0, 0, 10, 0));
+        wrapper.add(equbCountLabel);
+
         JPanel row = new JPanel(new FlowLayout(FlowLayout.LEFT, 16, 0));
         row.setOpaque(false);
 
@@ -189,10 +222,55 @@ public class EqubPanel extends JPanel {
 
         GoldButton contributeBtn = new GoldButton("Make Contribution", GoldButton.Style.OUTLINE);
         contributeBtn.setPreferredSize(new Dimension(180, 42));
-        contributeBtn.addActionListener(e -> showComingSoon("Equb Contribution"));
+        contributeBtn.addActionListener(e -> handleContribution());
         row.add(contributeBtn);
 
-        return row;
+        wrapper.add(row);
+        return wrapper;
+    }
+
+    private void handleContribution() {
+        // Simple input dialog — full Equb group management UI comes in a later phase
+        JTextField equbNameField   = new JTextField("Merkato Circle", 20);
+        JTextField amountField     = new JTextField("500", 20);
+
+        JPanel inputPanel = new JPanel(new GridLayout(0, 1, 0, 8));
+        inputPanel.setBackground(HabeshaTheme.BLACK_CARD);
+        inputPanel.add(new JLabel("Equb Group Name:"));
+        inputPanel.add(equbNameField);
+        inputPanel.add(new JLabel("Contribution Amount (ETB):"));
+        inputPanel.add(amountField);
+
+        int result = JOptionPane.showConfirmDialog(this, inputPanel,
+                "Make Equb Contribution", JOptionPane.OK_CANCEL_OPTION);
+        if (result != JOptionPane.OK_OPTION) return;
+
+        String equbName = equbNameField.getText().trim();
+        String amtText  = amountField.getText().trim();
+
+        if (equbName.isEmpty()) { showError("Please enter the Equb group name."); return; }
+        if (amtText.isEmpty())  { showError("Please enter an amount."); return; }
+
+        try {
+            double amount = Double.parseDouble(amtText.replace(",", ""));
+            Transaction tx = txService.equbContribution(amount, equbName);
+
+            JOptionPane.showMessageDialog(this,
+                    String.format("✓  Equb contribution of %.2f ETB recorded!\nRef: %s",
+                            amount, tx.getReferenceNumber()),
+                    "Contribution Successful", JOptionPane.INFORMATION_MESSAGE);
+
+            mainFrame.refreshAllUI();   // sync dashboard + history
+
+        } catch (NumberFormatException ex) {
+            showError("Invalid amount.");
+        } catch (BankingException ex) {
+            showError(ex.getMessage());
+        }
+    }
+
+    private void showError(String msg) {
+        JOptionPane.showMessageDialog(this, msg, "Error", JOptionPane.WARNING_MESSAGE);
     }
 
     private void showComingSoon(String feature) {

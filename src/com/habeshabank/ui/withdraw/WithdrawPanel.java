@@ -1,6 +1,10 @@
 package com.habeshabank.ui.withdraw;
 
+import com.habeshabank.exception.BankingException;
+import com.habeshabank.model.Transaction;
 import com.habeshabank.model.UserSession;
+import com.habeshabank.service.TransactionService;
+import com.habeshabank.ui.Refreshable;
 import com.habeshabank.ui.components.*;
 import com.habeshabank.ui.dashboard.MainFrame;
 import com.habeshabank.ui.theme.HabeshaTheme;
@@ -9,14 +13,22 @@ import javax.swing.*;
 import java.awt.*;
 
 /**
- * Withdraw funds panel. UI shell — service layer to be wired later.
+ * Withdraw funds panel.
+ * Phase 2: handleWithdraw() delegates to TransactionService.
+ * Phase 3: implements Refreshable — refreshData() updates the balance StatCard.
+ *          All layout and styling unchanged from Phase 1/2.
  */
-public class WithdrawPanel extends JPanel {
+public class WithdrawPanel extends JPanel implements Refreshable {
 
     private final MainFrame mainFrame;
     private HabeshaTextField amountField;
     private JComboBox<String> methodCombo;
     private HabeshaTextField pinField;
+
+    // Phase 3: promoted to field so refreshData() can update it
+    private StatCard balanceCard;
+
+    private final TransactionService txService = TransactionService.getInstance();
 
     public WithdrawPanel(MainFrame mainFrame) {
         this.mainFrame = mainFrame;
@@ -24,6 +36,16 @@ public class WithdrawPanel extends JPanel {
         setBackground(HabeshaTheme.BLACK_DEEP);
         setLayout(new BorderLayout());
         add(buildScrollableContent(), BorderLayout.CENTER);
+    }
+
+    // ── Refreshable ───────────────────────────────────────────────────────────
+
+    @Override
+    public void refreshData() {
+        if (balanceCard != null) {
+            balanceCard.setValue(String.format("%.2f ETB", UserSession.getInstance().getBalance()));
+            balanceCard.repaint();
+        }
     }
 
     private JScrollPane buildScrollableContent() {
@@ -132,12 +154,12 @@ public class WithdrawPanel extends JPanel {
         panel.setOpaque(false);
         panel.setLayout(new BoxLayout(panel, BoxLayout.Y_AXIS));
 
-        StatCard bc = new StatCard("Current Balance",
+        balanceCard = new StatCard("Current Balance",
                 String.format("%.2f ETB", UserSession.getInstance().getBalance()),
                 "Available to withdraw", HabeshaTheme.GOLD_PRIMARY);
-        bc.setAlignmentX(Component.LEFT_ALIGNMENT);
-        bc.setMaximumSize(new Dimension(Integer.MAX_VALUE, 120));
-        panel.add(bc);
+        balanceCard.setAlignmentX(Component.LEFT_ALIGNMENT);
+        balanceCard.setMaximumSize(new Dimension(Integer.MAX_VALUE, 120));
+        panel.add(balanceCard);
         panel.add(Box.createVerticalStrut(16));
 
         JPanel info = new SectionPanel("", null);
@@ -170,28 +192,42 @@ public class WithdrawPanel extends JPanel {
         return panel;
     }
 
+    // ── Actions ───────────────────────────────────────────────────────────────
+
     private void handleWithdraw() {
-        String amtText = amountField.getText().trim();
-        if (amtText.isEmpty()) { showError("Please enter an amount."); return; }
-        if (pinField.getText().trim().isEmpty()) { showError("Please enter your PIN."); return; }
+        if (amountField.getText().trim().isEmpty()) { showError("Please enter an amount."); return; }
+        if (pinField.getText().trim().isEmpty())    { showError("Please enter your PIN."); return; }
+
+        double amount;
+        try {
+            amount = Double.parseDouble(amountField.getText().trim().replace(",", ""));
+        } catch (NumberFormatException ex) {
+            showError("Invalid amount.");
+            return;
+        }
+
+        String method = (String) methodCombo.getSelectedItem();
+        String desc   = "Withdrawal – " + method;
 
         try {
-            double amount = Double.parseDouble(amtText.replace(",", ""));
-            UserSession session = UserSession.getInstance();
-
-            if (amount < 200)                   { showError("Minimum withdrawal is 200 ETB."); return; }
-            if (amount > session.getBalance())   { showError("Insufficient balance."); return; }
-
-            session.setBalance(session.getBalance() - amount);
+            Transaction tx = txService.withdraw(amount, desc);
 
             JOptionPane.showMessageDialog(this,
-                    String.format("✓  Withdrawal of %.2f ETB successful!\nNew Balance: %.2f ETB",
-                            amount, session.getBalance()),
+                    String.format(
+                            "✓  Withdrawal successful!\n\n" +
+                                    "Amount:      %.2f ETB\n" +
+                                    "New Balance: %.2f ETB\n" +
+                                    "Reference:   %s",
+                            amount,
+                            UserSession.getInstance().getBalance(),
+                            tx.getReferenceNumber()),
                     "Withdrawal Successful", JOptionPane.INFORMATION_MESSAGE);
 
             clearForm();
-        } catch (NumberFormatException ex) {
-            showError("Invalid amount.");
+            mainFrame.refreshAllUI();   // sync dashboard + history
+
+        } catch (BankingException ex) {
+            showError(ex.getMessage());
         }
     }
 

@@ -8,39 +8,36 @@ import com.habeshabank.model.Account;
 import com.habeshabank.model.Transaction;
 import com.habeshabank.model.TransactionType;
 import com.habeshabank.model.UserSession;
+import com.habeshabank.repository.AccountRepository;
+import com.habeshabank.repository.SqliteAccountRepository;
+import com.habeshabank.repository.SqliteTransactionRepository;
+import com.habeshabank.repository.TransactionRepository;
 
-import java.util.ArrayList;
+import java.time.YearMonth;
 import java.util.Collections;
 import java.util.List;
 
 /**
  * Executes all financial operations: deposit, withdraw, transfer, equb, iddir.
  *
- * Architecture notes
- * ──────────────────
- * • Every operation follows the same atomic pattern:
- *     1. Validate input
- *     2. Validate account state
- *     3. Build a Transaction record
- *     4. Apply the balance change to the Account object
- *     5. Record the transaction (in-memory list for now)
- *     6. Sync the flat balance back to UserSession for UI reads
- *
- * • The transaction list acts as a stub TransactionRepository.
- *   It will be replaced by a repository interface + SQLite implementation
- *   in the next phase without changing any method signatures here.
- *
- * • All methods are synchronised to prevent double-submit race conditions
- *   that are possible when Swing workers fire overlapping calls.
- *
- * • UI panels import this service and call the public methods.
- *   They receive a {@link Transaction} result and use it for receipt display.
+ * Phase 4 changes
+ * ───────────────
+ * • In-memory List<Transaction> replaced by {@link TransactionRepository}.
+ * • Account balance updates are persisted to SQLite after every operation via
+ *   {@link AccountRepository#update(Account)}.
+ * • The private {@code record()} method now calls
+ *   {@link SqliteTransactionRepository#save(Transaction, String)} with the
+ *   account number so the foreign key is stored correctly.
+ * • All public method signatures, validation logic, and service behaviour
+ *   are identical to Phase 3 — no UI class needs modification.
+ * • seedDemoTransactions() was a no-op in Phase 3; removed entirely here.
  */
 public class TransactionService {
 
-    // ── Stub repository (replaced by SQLite repo later) ───────────────────────
-    private final List<Transaction> transactionLog = new ArrayList<>();
-    private long nextId = 1L;
+    // ── Repositories ──────────────────────────────────────────────────────────
+
+    private final SqliteTransactionRepository txRepo;
+    private final AccountRepository           accountRepo;
 
     // ── Singleton ─────────────────────────────────────────────────────────────
 
@@ -52,7 +49,8 @@ public class TransactionService {
     }
 
     private TransactionService() {
-        seedDemoTransactions();
+        this.txRepo      = new SqliteTransactionRepository();
+        this.accountRepo = new SqliteAccountRepository();
     }
 
     // ── Public API ────────────────────────────────────────────────────────────
@@ -62,8 +60,7 @@ public class TransactionService {
      *
      * @param amount      amount in ETB, must be ≥ Account.MIN_DEPOSIT
      * @param description human-readable source description
-     * @return the recorded Transaction
-     * @throws ValidationException if amount is invalid
+     * @return the persisted Transaction
      */
     public synchronized Transaction deposit(double amount, String description)
             throws BankingException {
@@ -72,15 +69,10 @@ public class TransactionService {
 
         Account account = resolveSessionAccount();
         account.credit(amount);
+        accountRepo.update(account);        // persist new balance
 
-        Transaction tx = record(
-                TransactionType.DEPOSIT,
-                amount,
-                account.getBalance(),
-                description,
-                null,
-                account.getAccountNumber()
-        );
+        Transaction tx = record(TransactionType.DEPOSIT, amount,
+                account.getBalance(), description, null, account);
 
         syncSession(account);
         return tx;
@@ -91,9 +83,7 @@ public class TransactionService {
      *
      * @param amount      amount in ETB, must be ≥ Account.MIN_WITHDRAWAL
      * @param description withdrawal method description
-     * @return the recorded Transaction
-     * @throws InsufficientFundsException if balance is too low
-     * @throws ValidationException        if amount is invalid
+     * @return the persisted Transaction
      */
     public synchronized Transaction withdraw(double amount, String description)
             throws BankingException {
@@ -101,21 +91,14 @@ public class TransactionService {
         validateAmount(amount, Account.MIN_WITHDRAWAL, Account.COUNTER_WITHDRAWAL_MAX, "Withdrawal");
 
         Account account = resolveSessionAccount();
-
-        if (!account.hasSufficientFunds(amount)) {
+        if (!account.hasSufficientFunds(amount))
             throw new InsufficientFundsException(account.getBalance(), amount);
-        }
 
         account.debit(amount);
+        accountRepo.update(account);
 
-        Transaction tx = record(
-                TransactionType.WITHDRAWAL,
-                amount,
-                account.getBalance(),
-                description,
-                null,
-                account.getAccountNumber()
-        );
+        Transaction tx = record(TransactionType.WITHDRAWAL, amount,
+                account.getBalance(), description, null, account);
 
         syncSession(account);
         return tx;
@@ -124,17 +107,15 @@ public class TransactionService {
     /**
      * Transfers funds from the session account to a counterparty.
      *
-     * For internal transfers (same bank) a fee of 0 is applied.
-     * For external transfers a flat fee of Account.EXTERNAL_TRANSFER_FEE is applied.
+     * Internal transfers (same bank): 0 ETB fee.
+     * External transfers: Account.EXTERNAL_TRANSFER_FEE (25 ETB).
      *
-     * @param amount             amount to send in ETB
-     * @param recipientAccount   destination account number
-     * @param recipientName      beneficiary display name
-     * @param description        transfer reference / narration
-     * @param isInternal         true if the destination is also a Habesha Bank account
-     * @return the recorded TRANSFER_OUT Transaction
-     * @throws InsufficientFundsException if balance is insufficient (including fee)
-     * @throws ValidationException        if fields are missing or amount is invalid
+     * @param amount           amount to send in ETB
+     * @param recipientAccount destination account number
+     * @param recipientName    beneficiary display name
+     * @param description      transfer reference / narration
+     * @param isInternal       true if the destination is also a Habesha Bank account
+     * @return the persisted TRANSFER_OUT Transaction
      */
     public synchronized Transaction transfer(double amount,
                                              String recipientAccount,
@@ -151,28 +132,19 @@ public class TransactionService {
         double total = amount + fee;
 
         Account account = resolveSessionAccount();
-        if (!account.hasSufficientFunds(total)) {
+        if (!account.hasSufficientFunds(total))
             throw new InsufficientFundsException(account.getBalance(), total);
-        }
 
         account.debit(total);
+        accountRepo.update(account);
 
-        String narration = description != null && !description.isBlank()
+        String narration = (description != null && !description.isBlank())
                 ? description
                 : "Transfer to " + recipientName;
+        if (fee > 0) narration += String.format(" (fee: %.2f ETB)", fee);
 
-        if (fee > 0) {
-            narration += String.format(" (fee: %.2f ETB)", fee);
-        }
-
-        Transaction tx = record(
-                TransactionType.TRANSFER_OUT,
-                amount,
-                account.getBalance(),
-                narration,
-                recipientAccount,
-                account.getAccountNumber()
-        );
+        Transaction tx = record(TransactionType.TRANSFER_OUT, amount,
+                account.getBalance(), narration, recipientAccount, account);
 
         syncSession(account);
         return tx;
@@ -183,9 +155,7 @@ public class TransactionService {
      *
      * @param amount   contribution amount for this round
      * @param equbName name of the Equb group
-     * @return the recorded Transaction
-     * @throws InsufficientFundsException if balance is insufficient
-     * @throws ValidationException        if amount or name is invalid
+     * @return the persisted Transaction
      */
     public synchronized Transaction equbContribution(double amount, String equbName)
             throws BankingException {
@@ -194,20 +164,14 @@ public class TransactionService {
         validateField(equbName, "Equb group name");
 
         Account account = resolveSessionAccount();
-        if (!account.hasSufficientFunds(amount)) {
+        if (!account.hasSufficientFunds(amount))
             throw new InsufficientFundsException(account.getBalance(), amount);
-        }
 
         account.debit(amount);
+        accountRepo.update(account);
 
-        Transaction tx = record(
-                TransactionType.EQUB,
-                amount,
-                account.getBalance(),
-                "Equb contribution – " + equbName,
-                null,
-                account.getAccountNumber()
-        );
+        Transaction tx = record(TransactionType.EQUB, amount,
+                account.getBalance(), "Equb contribution – " + equbName, null, account);
 
         syncSession(account);
         return tx;
@@ -216,10 +180,10 @@ public class TransactionService {
     /**
      * Records an Iddir mutual-aid contribution.
      *
-     * @param amount       contribution amount
-     * @param beneficiary  name of the person being supported
-     * @param occasion     type of occasion
-     * @return the recorded Transaction
+     * @param amount      contribution amount
+     * @param beneficiary name of the person being supported
+     * @param occasion    type of occasion
+     * @return the persisted Transaction
      */
     public synchronized Transaction iddirContribution(double amount,
                                                       String beneficiary,
@@ -230,72 +194,94 @@ public class TransactionService {
         validateField(beneficiary, "Beneficiary name");
 
         Account account = resolveSessionAccount();
-        if (!account.hasSufficientFunds(amount)) {
+        if (!account.hasSufficientFunds(amount))
             throw new InsufficientFundsException(account.getBalance(), amount);
-        }
 
         account.debit(amount);
+        accountRepo.update(account);
 
         String desc = "Iddir – " + occasion + " for " + beneficiary;
-
-        Transaction tx = record(
-                TransactionType.IDDIR,
-                amount,
-                account.getBalance(),
-                desc,
-                null,
-                account.getAccountNumber()
-        );
+        Transaction tx = record(TransactionType.IDDIR, amount,
+                account.getBalance(), desc, null, account);
 
         syncSession(account);
         return tx;
     }
 
+    // ── Query API (called by UI panels via Refreshable.refreshData()) ─────────
+
     /**
-     * Returns an unmodifiable view of all recorded transactions,
-     * most-recent first.
+     * Returns all transactions for the session account, most-recent first.
+     * Reads directly from SQLite — always current.
      */
     public List<Transaction> getTransactionHistory() {
-        List<Transaction> sorted = new ArrayList<>(transactionLog);
-        Collections.reverse(sorted);
-        return Collections.unmodifiableList(sorted);
+        String acctNum = sessionAccountNumber();
+        if (acctNum == null) return Collections.emptyList();
+        return txRepo.findByAccountNumber(acctNum);
     }
 
     /**
-     * Returns the last N transactions (most-recent first).
-     * Used by the dashboard's "Recent Transactions" table.
+     * Returns the last {@code count} transactions for the session account.
+     * Used by the dashboard Recent Transactions table.
      */
     public List<Transaction> getRecentTransactions(int count) {
-        List<Transaction> all = getTransactionHistory();
-        return all.subList(0, Math.min(count, all.size()));
+        String acctNum = sessionAccountNumber();
+        if (acctNum == null) return Collections.emptyList();
+        return txRepo.findRecentByAccountNumber(acctNum, count);
+    }
+
+    /** Sums all DEPOSIT amounts in the current calendar month. */
+    public synchronized double getTotalDepositsThisMonth() {
+        String acctNum = sessionAccountNumber();
+        if (acctNum == null) return 0.0;
+        return txRepo.sumAmountByTypeAndMonth(acctNum, "DEPOSIT", YearMonth.now());
+    }
+
+    /** Sums all WITHDRAWAL amounts in the current calendar month. */
+    public synchronized double getTotalWithdrawalsThisMonth() {
+        String acctNum = sessionAccountNumber();
+        if (acctNum == null) return 0.0;
+        return txRepo.sumAmountByTypeAndMonth(acctNum, "WITHDRAWAL", YearMonth.now());
+    }
+
+    /** Counts all EQUB contribution transactions for the session account. */
+    public synchronized long getEqubContributionCount() {
+        String acctNum = sessionAccountNumber();
+        if (acctNum == null) return 0L;
+        return txRepo.countByType(acctNum, "EQUB");
+    }
+
+    /** Sums all IDDIR contribution amounts for the session account (all time). */
+    public synchronized double getTotalIddirContributions() {
+        String acctNum = sessionAccountNumber();
+        if (acctNum == null) return 0.0;
+        // Sum across all months by using countByType's sibling: query without month filter
+        return txRepo.sumAllByType(acctNum, "IDDIR");
     }
 
     // ── Private Helpers ───────────────────────────────────────────────────────
 
     /**
-     * Builds, assigns an id, and stores a Transaction record.
-     * Returns a Transaction that uses the legacy Transaction.Type enum so that
-     * existing UI table renderers continue to work with {@code signedAmount()}.
+     * Builds a Transaction, persists it, and returns it.
+     * Uses the SqliteTransactionRepository overload that accepts accountNumber
+     * so the FK column is set correctly.
      */
     private Transaction record(TransactionType type,
                                double amount,
                                double balanceAfter,
                                String description,
                                String counterpartyAccount,
-                               String ownAccountNumber) {
+                               Account account) {
 
-        // Convert TransactionType → legacy Transaction.Type for backward compat
-        Transaction.Type legacyType = toLegacyType(type);
-
-        Transaction tx = new Transaction(legacyType, amount, balanceAfter,
+        Transaction tx = new Transaction(
+                toLegacyType(type), amount, balanceAfter,
                 description, counterpartyAccount);
-        tx.setId(nextId++);
 
-        transactionLog.add(tx);
+        txRepo.save(tx, account.getAccountNumber());
         return tx;
     }
 
-    /** Maps new TransactionType → legacy Transaction.Type inline enum. */
+    /** Maps TransactionType → legacy Transaction.Type (UI uses the legacy enum). */
     private Transaction.Type toLegacyType(TransactionType t) {
         return switch (t) {
             case DEPOSIT      -> Transaction.Type.DEPOSIT;
@@ -309,8 +295,8 @@ public class TransactionService {
 
     /**
      * Resolves the live Account from the session.
-     * Falls back to creating a synthetic Account from flat session fields
-     * if AuthService was bypassed (e.g. demo login via loadDemoUser()).
+     * Falls back to a DB lookup if the session was populated via loadDemoUser()
+     * (i.e. AuthService was bypassed).
      */
     private Account resolveSessionAccount() throws AccountNotFoundException {
         UserSession session = UserSession.getInstance();
@@ -319,59 +305,47 @@ public class TransactionService {
             return session.getLiveAccount();
         }
 
-        // Fallback: build a transient Account from flat session fields
-        // (covers demo mode where AuthService wasn't used)
-        if (session.getAccountNumber() != null) {
-            Account fallback = new Account();
-            fallback.setAccountNumber(session.getAccountNumber());
-            fallback.setBalance(session.getBalance());
-            fallback.setAccountType(Account.AccountType.SAVINGS);
-            // Attach it so future calls use the same object
-            session.setLiveAccount(fallback);
-            return fallback;
+        // Fallback: load from DB by account number
+        String acctNum = session.getAccountNumber();
+        if (acctNum != null) {
+            Account account = accountRepo.findByAccountNumber(acctNum)
+                    .orElseThrow(() -> new AccountNotFoundException(acctNum));
+            session.setLiveAccount(account);
+            return account;
         }
 
         throw new AccountNotFoundException("No active session account.");
     }
 
-    /** Writes the account's current balance back to the flat session field for UI. */
+    /** Writes the account's current balance back to the flat session field for UI reads. */
     private void syncSession(Account account) {
         UserSession.getInstance().setBalance(account.getBalance());
+    }
+
+    /** Returns the session account number, or null if no session is active. */
+    private String sessionAccountNumber() {
+        UserSession session = UserSession.getInstance();
+        if (session.getLiveAccount() != null)
+            return session.getLiveAccount().getAccountNumber();
+        return session.getAccountNumber();
     }
 
     // ── Validation ────────────────────────────────────────────────────────────
 
     private void validateAmount(double amount, double min, double max, String context)
             throws ValidationException {
-        if (amount <= 0) {
+        if (amount <= 0)
             throw new ValidationException("amount", context + " amount must be positive.");
-        }
-        if (amount < min) {
+        if (amount < min)
             throw new ValidationException("amount",
                     String.format("Minimum %s is %.2f ETB.", context.toLowerCase(), min));
-        }
-        if (amount > max) {
+        if (amount > max)
             throw new ValidationException("amount",
                     String.format("Maximum %s is %.2f ETB.", context.toLowerCase(), max));
-        }
     }
 
     private void validateField(String value, String fieldName) throws ValidationException {
-        if (value == null || value.isBlank()) {
+        if (value == null || value.isBlank())
             throw new ValidationException(fieldName + " is required.");
-        }
-    }
-
-    // ── Demo Seeding ──────────────────────────────────────────────────────────
-
-    /**
-     * Pre-loads demo transaction history so the history panel and dashboard
-     * show realistic data from first launch, even before any real operations.
-     */
-    private void seedDemoTransactions() {
-        // These mirror the hard-coded rows in DashboardPanel and TransactionHistoryPanel.
-        // When the database layer arrives, seeding moves to a migration script instead.
-        // For now, the UI panels still show their own hard-coded rows on first paint;
-        // the live history grows from actual user operations.
     }
 }

@@ -4,6 +4,7 @@ import com.habeshabank.exception.BankingException;
 import com.habeshabank.model.Transaction;
 import com.habeshabank.model.UserSession;
 import com.habeshabank.service.TransactionService;
+import com.habeshabank.ui.Refreshable;
 import com.habeshabank.ui.components.*;
 import com.habeshabank.ui.dashboard.MainFrame;
 import com.habeshabank.ui.theme.HabeshaTheme;
@@ -13,16 +14,21 @@ import java.awt.*;
 
 /**
  * Deposit funds panel.
- * Phase 2: handleDeposit() now delegates to TransactionService.
- * All layout, styling, and field structure are unchanged from Phase 1.
+ * Phase 2: handleDeposit() delegates to TransactionService.
+ * Phase 3: implements Refreshable — refreshData() updates the balance StatCard
+ *          so it always shows live balance after every transaction.
+ *          All layout and styling unchanged from Phase 1/2.
  */
-public class DepositPanel extends JPanel {
+public class DepositPanel extends JPanel implements Refreshable {
 
     private final MainFrame mainFrame;
     private HabeshaTextField amountField;
     private JComboBox<String> sourceCombo;
     private JTextArea notesArea;
     private JLabel balanceLabel;
+
+    // Phase 3: promoted to field so refreshData() can update it
+    private StatCard balanceCard;
 
     private final TransactionService txService = TransactionService.getInstance();
 
@@ -32,6 +38,17 @@ public class DepositPanel extends JPanel {
         setBackground(HabeshaTheme.BLACK_DEEP);
         setLayout(new BorderLayout());
         add(buildScrollableContent(), BorderLayout.CENTER);
+    }
+
+    // ── Refreshable ───────────────────────────────────────────────────────────
+
+    /** Updates the balance StatCard to show the live session balance. */
+    @Override
+    public void refreshData() {
+        if (balanceCard != null) {
+            balanceCard.setValue(formatBalance(UserSession.getInstance().getBalance()));
+            balanceCard.repaint();
+        }
     }
 
     private JScrollPane buildScrollableContent() {
@@ -93,7 +110,6 @@ public class DepositPanel extends JPanel {
 
         card.add(fieldLabel("Amount (ETB)"));
         card.add(Box.createVerticalStrut(6));
-
         amountField = new HabeshaTextField("e.g. 5000.00", 20);
         amountField.setMaximumSize(new Dimension(Integer.MAX_VALUE, 40));
         amountField.setAlignmentX(Component.LEFT_ALIGNMENT);
@@ -102,43 +118,29 @@ public class DepositPanel extends JPanel {
 
         card.add(fieldLabel("Source / Method"));
         card.add(Box.createVerticalStrut(6));
-
-        String[] sources = {
-                "Cash Deposit",
-                "Bank Transfer",
-                "Mobile Money",
-                "Cheque"
-        };
-
+        String[] sources = { "Cash Deposit", "Bank Transfer", "Mobile Money", "Cheque" };
         sourceCombo = new JComboBox<>(sources);
         sourceCombo.setMaximumSize(new Dimension(Integer.MAX_VALUE, 40));
         sourceCombo.setAlignmentX(Component.LEFT_ALIGNMENT);
         sourceCombo.setFont(HabeshaTheme.FONT_BODY);
-
         card.add(sourceCombo);
         card.add(Box.createVerticalStrut(20));
 
         card.add(fieldLabel("Notes (optional)"));
         card.add(Box.createVerticalStrut(6));
-
         notesArea = new JTextArea(3, 20);
         notesArea.setFont(HabeshaTheme.FONT_BODY);
         notesArea.setBackground(HabeshaTheme.BLACK_CARD);
         notesArea.setForeground(HabeshaTheme.CREAM_LIGHT);
         notesArea.setCaretColor(HabeshaTheme.GOLD_PRIMARY);
-
         notesArea.setBorder(BorderFactory.createCompoundBorder(
                 BorderFactory.createLineBorder(HabeshaTheme.BLACK_BORDER),
-                BorderFactory.createEmptyBorder(8, 12, 8, 12)
-        ));
-
+                BorderFactory.createEmptyBorder(8, 12, 8, 12)));
         notesArea.setLineWrap(true);
-
         JScrollPane noteScroll = new JScrollPane(notesArea);
         noteScroll.setMaximumSize(new Dimension(Integer.MAX_VALUE, 80));
         noteScroll.setBorder(BorderFactory.createEmptyBorder());
         noteScroll.setAlignmentX(Component.LEFT_ALIGNMENT);
-
         card.add(noteScroll);
         card.add(Box.createVerticalStrut(28));
 
@@ -151,15 +153,12 @@ public class DepositPanel extends JPanel {
         submitBtn.addActionListener(e -> handleDeposit());
         btnRow.add(submitBtn);
 
-        GoldButton clearBtn =
-                new GoldButton("Clear", GoldButton.Style.OUTLINE);
-
+        GoldButton clearBtn = new GoldButton("Clear", GoldButton.Style.OUTLINE);
         clearBtn.setPreferredSize(new Dimension(100, 42));
         clearBtn.addActionListener(e -> clearForm());
         btnRow.add(clearBtn);
 
         card.add(btnRow);
-
         return card;
     }
 
@@ -168,17 +167,13 @@ public class DepositPanel extends JPanel {
         panel.setOpaque(false);
         panel.setLayout(new BoxLayout(panel, BoxLayout.Y_AXIS));
 
-        StatCard bc = new StatCard(
-                "Current Balance",
+        // Balance card — assigned to field so refreshData() can update it
+        balanceCard = new StatCard("Current Balance",
                 formatBalance(UserSession.getInstance().getBalance()),
-                "Available funds",
-                HabeshaTheme.GOLD_PRIMARY
-        );
-
-        bc.setAlignmentX(Component.LEFT_ALIGNMENT);
-        bc.setMaximumSize(new Dimension(Integer.MAX_VALUE, 120));
-
-        panel.add(bc);
+                "Available funds", HabeshaTheme.GOLD_PRIMARY);
+        balanceCard.setAlignmentX(Component.LEFT_ALIGNMENT);
+        balanceCard.setMaximumSize(new Dimension(Integer.MAX_VALUE, 120));
+        panel.add(balanceCard);
         panel.add(Box.createVerticalStrut(16));
 
         JPanel info = new SectionPanel("", null);
@@ -189,7 +184,6 @@ public class DepositPanel extends JPanel {
         infoTitle.setFont(HabeshaTheme.FONT_HEADING);
         infoTitle.setForeground(HabeshaTheme.GOLD_PRIMARY);
         infoTitle.setAlignmentX(Component.LEFT_ALIGNMENT);
-
         info.add(infoTitle);
         info.add(Box.createVerticalStrut(12));
 
@@ -200,34 +194,34 @@ public class DepositPanel extends JPanel {
                 "• A PDF receipt will be generated",
                 "• Large deposits may require ID verification"
         };
-
         for (String b : bullets) {
             JLabel lbl = new JLabel(b);
             lbl.setFont(HabeshaTheme.FONT_BODY);
             lbl.setForeground(HabeshaTheme.CREAM_MID);
             lbl.setAlignmentX(Component.LEFT_ALIGNMENT);
-
             info.add(lbl);
             info.add(Box.createVerticalStrut(6));
         }
 
         info.setAlignmentX(Component.LEFT_ALIGNMENT);
         panel.add(info);
-
         return panel;
     }
 
+    // ── Actions ───────────────────────────────────────────────────────────────
+
+    /**
+     * Phase 2: delegates to TransactionService instead of mutating UserSession directly.
+     * The success message now shows the reference number from the recorded Transaction.
+     */
     private void handleDeposit() {
-
         String amtText = amountField.getText().trim();
-
         if (amtText.isEmpty()) {
             showError("Please enter an amount.");
             return;
         }
 
         double amount;
-
         try {
             amount = Double.parseDouble(amtText.replace(",", ""));
         } catch (NumberFormatException ex) {
@@ -236,30 +230,25 @@ public class DepositPanel extends JPanel {
         }
 
         String source = (String) sourceCombo.getSelectedItem();
-        String notes = notesArea.getText().trim();
-
-        String desc = source + (notes.isEmpty() ? "" : " – " + notes);
+        String notes  = notesArea.getText().trim();
+        String desc   = source + (notes.isEmpty() ? "" : " – " + notes);
 
         try {
-
             Transaction tx = txService.deposit(amount, desc);
 
-            JOptionPane.showMessageDialog(
-                    this,
+            JOptionPane.showMessageDialog(this,
                     String.format(
-                            "✓ Deposit successful!\n\n" +
-                                    "Amount: %.2f ETB\n" +
+                            "✓  Deposit successful!\n\n" +
+                                    "Amount:      %.2f ETB\n" +
                                     "New Balance: %.2f ETB\n" +
-                                    "Reference: %s",
+                                    "Reference:   %s",
                             amount,
                             UserSession.getInstance().getBalance(),
-                            tx.getReferenceNumber()
-                    ),
-                    "Deposit Successful",
-                    JOptionPane.INFORMATION_MESSAGE
-            );
+                            tx.getReferenceNumber()),
+                    "Deposit Successful", JOptionPane.INFORMATION_MESSAGE);
 
             clearForm();
+            mainFrame.refreshAllUI();   // sync dashboard + history
 
         } catch (BankingException ex) {
             showError(ex.getMessage());
@@ -273,12 +262,7 @@ public class DepositPanel extends JPanel {
     }
 
     private void showError(String msg) {
-        JOptionPane.showMessageDialog(
-                this,
-                msg,
-                "Input Error",
-                JOptionPane.WARNING_MESSAGE
-        );
+        JOptionPane.showMessageDialog(this, msg, "Input Error", JOptionPane.WARNING_MESSAGE);
     }
 
     private JLabel fieldLabel(String text) {
