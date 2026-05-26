@@ -265,6 +265,33 @@ public class LoginFrame extends JFrame {
         demoHint.setAlignmentX(Component.LEFT_ALIGNMENT);
         form.add(demoHint);
 
+        form.add(Box.createVerticalStrut(14));
+
+        // ── "Create Account" link — Phase 5 ──────────────────────────────────
+        JPanel linkRow = new JPanel(new FlowLayout(FlowLayout.LEFT, 0, 0));
+        linkRow.setOpaque(false);
+        linkRow.setAlignmentX(Component.LEFT_ALIGNMENT);
+        linkRow.setMaximumSize(new Dimension(Integer.MAX_VALUE, 20));
+
+        JLabel noAccount = new JLabel("New to Habesha Bank?  ");
+        noAccount.setFont(HabeshaTheme.FONT_SMALL);
+        noAccount.setForeground(HabeshaTheme.CREAM_DIM);
+        linkRow.add(noAccount);
+
+        JLabel createLink = new JLabel("Create Account");
+        createLink.setFont(HabeshaTheme.FONT_SMALL);
+        createLink.setForeground(HabeshaTheme.GOLD_PRIMARY);
+        createLink.setCursor(Cursor.getPredefinedCursor(Cursor.HAND_CURSOR));
+        createLink.addMouseListener(new MouseAdapter() {
+            @Override public void mouseClicked(MouseEvent e) { openRegisterFrame(); }
+            @Override public void mouseEntered(MouseEvent e) {
+                createLink.setForeground(HabeshaTheme.GOLD_BRIGHT); }
+            @Override public void mouseExited(MouseEvent e)  {
+                createLink.setForeground(HabeshaTheme.GOLD_PRIMARY); }
+        });
+        linkRow.add(createLink);
+        form.add(linkRow);
+
         // Enter key triggers login
         passwordField.addActionListener(e -> attemptLogin());
         accountField.addActionListener(e -> passwordField.requestFocusInWindow());
@@ -324,5 +351,19 @@ public class LoginFrame extends JFrame {
         });
         timer.setRepeats(false);
         timer.start();
+    }
+
+    // ── Navigation ────────────────────────────────────────────────────────────
+
+    /**
+     * Opens RegisterFrame alongside (not replacing) this LoginFrame.
+     * LoginFrame stays open so the user can return without re-launching.
+     * RegisterFrame calls goToLogin() on success which disposes itself
+     * and opens a fresh LoginFrame, so this one is also disposed here
+     * to avoid two LoginFrames existing simultaneously.
+     */
+    private void openRegisterFrame() {
+        dispose();   // close this LoginFrame; RegisterFrame will open a new one on success
+        SwingUtilities.invokeLater(() -> new RegisterFrame().setVisible(true));
     }
 }

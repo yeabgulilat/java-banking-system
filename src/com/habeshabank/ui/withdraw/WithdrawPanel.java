@@ -1,8 +1,10 @@
 package com.habeshabank.ui.withdraw;
 
+import com.habeshabank.exception.AuthenticationException;
 import com.habeshabank.exception.BankingException;
 import com.habeshabank.model.Transaction;
 import com.habeshabank.model.UserSession;
+import com.habeshabank.service.AuthService;
 import com.habeshabank.service.TransactionService;
 import com.habeshabank.ui.Refreshable;
 import com.habeshabank.ui.components.*;
@@ -21,9 +23,9 @@ import java.awt.*;
 public class WithdrawPanel extends JPanel implements Refreshable {
 
     private final MainFrame mainFrame;
-    private HabeshaTextField amountField;
-    private JComboBox<String> methodCombo;
-    private HabeshaTextField pinField;
+    private HabeshaTextField     amountField;
+    private JComboBox<String>    methodCombo;
+    private HabeshaPasswordField pinField;    // Phase 6: upgraded to password field
 
     // Phase 3: promoted to field so refreshData() can update it
     private StatCard balanceCard;
@@ -125,7 +127,7 @@ public class WithdrawPanel extends JPanel implements Refreshable {
 
         card.add(fieldLabel("Confirm PIN"));
         card.add(Box.createVerticalStrut(6));
-        pinField = new HabeshaTextField("Enter your 4-digit PIN", 20);
+        pinField = new HabeshaPasswordField("Enter your 4-digit PIN", 20);  // Phase 6
         pinField.setMaximumSize(new Dimension(Integer.MAX_VALUE, 40));
         pinField.setAlignmentX(Component.LEFT_ALIGNMENT);
         card.add(pinField);
@@ -196,13 +198,26 @@ public class WithdrawPanel extends JPanel implements Refreshable {
 
     private void handleWithdraw() {
         if (amountField.getText().trim().isEmpty()) { showError("Please enter an amount."); return; }
-        if (pinField.getText().trim().isEmpty())    { showError("Please enter your PIN."); return; }
+        if (pinField.getPassword().length == 0)     { showError("Please enter your PIN."); return; }
 
         double amount;
         try {
             amount = Double.parseDouble(amountField.getText().trim().replace(",", ""));
         } catch (NumberFormatException ex) {
             showError("Invalid amount.");
+            return;
+        }
+
+        // Phase 6: verify PIN via AuthService before executing the withdrawal
+        try {
+            boolean pinOk = AuthService.getInstance().verifyPin(pinField.getPassword());
+            if (!pinOk) {
+                showError("Incorrect PIN. Please try again.");
+                pinField.setText("");
+                return;
+            }
+        } catch (AuthenticationException ex) {
+            showError(ex.getMessage());
             return;
         }
 
@@ -224,7 +239,8 @@ public class WithdrawPanel extends JPanel implements Refreshable {
                     "Withdrawal Successful", JOptionPane.INFORMATION_MESSAGE);
 
             clearForm();
-            mainFrame.refreshAllUI();   // sync dashboard + history
+            mainFrame.refreshAllUI();
+            mainFrame.resetSessionTimeout();
 
         } catch (BankingException ex) {
             showError(ex.getMessage());

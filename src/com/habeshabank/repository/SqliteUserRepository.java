@@ -39,10 +39,10 @@ public class SqliteUserRepository implements UserRepository {
     public User save(User user) {
         String sql = """
             INSERT INTO users
-                (username, password_hash, full_name, email, phone_number,
+                (username, password_hash, pin_hash, full_name, email, phone_number,
                  date_of_birth, national_id_number, active, locked,
                  failed_login_count, created_at, last_login_at)
-            VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+            VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
         """;
 
         try (PreparedStatement ps = connection().prepareStatement(
@@ -50,18 +50,19 @@ public class SqliteUserRepository implements UserRepository {
 
             ps.setString(1,  user.getUsername());
             ps.setString(2,  user.getPasswordHash());
-            ps.setString(3,  user.getFullName());
-            ps.setString(4,  user.getEmail());
-            ps.setString(5,  user.getPhoneNumber());
-            ps.setString(6,  user.getDateOfBirth() != null
+            ps.setString(3,  user.getPinHash());
+            ps.setString(4,  user.getFullName());
+            ps.setString(5,  user.getEmail());
+            ps.setString(6,  user.getPhoneNumber());
+            ps.setString(7,  user.getDateOfBirth() != null
                     ? user.getDateOfBirth().toString() : null);
-            ps.setString(7,  user.getNationalIdNumber());
-            ps.setInt(8,     user.isActive()  ? 1 : 0);
-            ps.setInt(9,     user.isLocked()  ? 1 : 0);
-            ps.setInt(10,    user.getFailedLoginCount());
-            ps.setString(11, user.getCreatedAt() != null
+            ps.setString(8,  user.getNationalIdNumber());
+            ps.setInt(9,     user.isActive()  ? 1 : 0);
+            ps.setInt(10,    user.isLocked()  ? 1 : 0);
+            ps.setInt(11,    user.getFailedLoginCount());
+            ps.setString(12, user.getCreatedAt() != null
                     ? user.getCreatedAt().toString() : LocalDateTime.now().toString());
-            ps.setString(12, user.getLastLoginAt() != null
+            ps.setString(13, user.getLastLoginAt() != null
                     ? user.getLastLoginAt().toString() : null);
 
             ps.executeUpdate();
@@ -83,6 +84,7 @@ public class SqliteUserRepository implements UserRepository {
         String sql = """
             UPDATE users SET
                 password_hash      = ?,
+                pin_hash           = ?,
                 full_name          = ?,
                 email              = ?,
                 phone_number       = ?,
@@ -95,15 +97,16 @@ public class SqliteUserRepository implements UserRepository {
 
         try (PreparedStatement ps = connection().prepareStatement(sql)) {
             ps.setString(1, user.getPasswordHash());
-            ps.setString(2, user.getFullName());
-            ps.setString(3, user.getEmail());
-            ps.setString(4, user.getPhoneNumber());
-            ps.setInt(5,    user.isActive() ? 1 : 0);
-            ps.setInt(6,    user.isLocked() ? 1 : 0);
-            ps.setInt(7,    user.getFailedLoginCount());
-            ps.setString(8, user.getLastLoginAt() != null
+            ps.setString(2, user.getPinHash());
+            ps.setString(3, user.getFullName());
+            ps.setString(4, user.getEmail());
+            ps.setString(5, user.getPhoneNumber());
+            ps.setInt(6,    user.isActive() ? 1 : 0);
+            ps.setInt(7,    user.isLocked() ? 1 : 0);
+            ps.setInt(8,    user.getFailedLoginCount());
+            ps.setString(9, user.getLastLoginAt() != null
                     ? user.getLastLoginAt().toString() : null);
-            ps.setLong(9,   user.getId());
+            ps.setLong(10,  user.getId());
             ps.executeUpdate();
         } catch (SQLException e) {
             throw new RuntimeException("Failed to update user id=" + user.getId(), e);
@@ -164,6 +167,7 @@ public class SqliteUserRepository implements UserRepository {
         u.setId(rs.getLong("id"));
         u.setUsername(rs.getString("username"));
         u.setPasswordHash(rs.getString("password_hash"));
+        u.setPinHash(rs.getString("pin_hash"));
         u.setFullName(rs.getString("full_name"));
         u.setEmail(rs.getString("email"));
         u.setPhoneNumber(rs.getString("phone_number"));

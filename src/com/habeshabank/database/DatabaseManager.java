@@ -122,6 +122,7 @@ public class DatabaseManager {
                     id                  INTEGER PRIMARY KEY AUTOINCREMENT,
                     username            TEXT    NOT NULL UNIQUE,
                     password_hash       TEXT    NOT NULL,
+                    pin_hash            TEXT,
                     full_name           TEXT    NOT NULL,
                     email               TEXT    NOT NULL,
                     phone_number        TEXT,
@@ -134,6 +135,15 @@ public class DatabaseManager {
                     last_login_at       TEXT
                 )
             """);
+
+            // ── Migration: add pin_hash to existing databases (Phase 6) ───────
+            // ALTER TABLE IGNORE is not valid SQL; we catch the error silently.
+            try {
+                st.execute("ALTER TABLE users ADD COLUMN pin_hash TEXT");
+                System.out.println("[DB] Migration: added pin_hash column to users.");
+            } catch (SQLException ignored) {
+                // Column already exists — safe to ignore
+            }
 
             // ── accounts ───────────────────────────────────────────────────────
             st.execute("""

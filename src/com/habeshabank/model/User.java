@@ -20,6 +20,7 @@ public class User {
     private long          id;
     private String        username;          // used at login (unique)
     private String        passwordHash;      // BCrypt / SHA-256 hash (set by AuthService)
+    private String        pinHash;           // 4-digit PIN hash (set by AuthService) — Phase 6
     private String        fullName;
     private String        email;
     private String        phoneNumber;
@@ -80,6 +81,7 @@ public class User {
     public long          getId()               { return id; }
     public String        getUsername()         { return username; }
     public String        getPasswordHash()     { return passwordHash; }
+    public String        getPinHash()          { return pinHash; }
     public String        getFullName()         { return fullName; }
     public String        getEmail()            { return email; }
     public String        getPhoneNumber()      { return phoneNumber; }
@@ -96,6 +98,7 @@ public class User {
     public void setId(long id)                             { this.id = id; }
     public void setUsername(String username)               { this.username = username; }
     public void setPasswordHash(String passwordHash)       { this.passwordHash = passwordHash; }
+    public void setPinHash(String pinHash)                 { this.pinHash = pinHash; }
     public void setFullName(String fullName)               { this.fullName = fullName; }
     public void setEmail(String email)                     { this.email = email; }
     public void setPhoneNumber(String phoneNumber)         { this.phoneNumber = phoneNumber; }

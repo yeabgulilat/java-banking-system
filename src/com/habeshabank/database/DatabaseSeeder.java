@@ -27,6 +27,7 @@ public class DatabaseSeeder {
 
     private static final String DEMO_USERNAME = "tigist.alemu";
     private static final String DEMO_PASSWORD = "demo1234";
+    private static final String DEMO_PIN      = "1234";          // Phase 6
     private static final String DEMO_FULLNAME = "Tigist Alemu";
     private static final String DEMO_EMAIL    = "tigist.alemu@habeshabank.et";
     private static final String DEMO_PHONE    = "+251911000001";
@@ -44,29 +45,31 @@ public class DatabaseSeeder {
      */
     public void seed() throws SQLException {
         seedDemoUser();
+        backfillMissingPins();
         syncAccountNumberGenerator();
     }
 
     // ── Private ───────────────────────────────────────────────────────────────
 
     private void seedDemoUser() throws SQLException {
-        // Skip entirely if demo user already exists
         if (userExists(DEMO_USERNAME)) {
             System.out.println("[Seeder] Demo user already exists — skipping seed.");
+            // Still ensure demo user has a PIN (handles upgrade from Phase 5 DB)
+            backfillPinForUser(DEMO_USERNAME, DEMO_PIN);
             return;
         }
 
         System.out.println("[Seeder] Seeding demo user...");
 
         String passwordHash = PasswordUtil.hash(DEMO_PASSWORD);
+        String pinHash      = PasswordUtil.hash(DEMO_PIN);
         String now          = LocalDateTime.now().toString();
 
-        // ── Insert user ───────────────────────────────────────────────────────
         String insertUser = """
             INSERT OR IGNORE INTO users
-                (username, password_hash, full_name, email, phone_number,
+                (username, password_hash, pin_hash, full_name, email, phone_number,
                  active, locked, failed_login_count, created_at)
-            VALUES (?, ?, ?, ?, ?, 1, 0, 0, ?)
+            VALUES (?, ?, ?, ?, ?, ?, 1, 0, 0, ?)
         """;
 
         long userId;
@@ -74,10 +77,11 @@ public class DatabaseSeeder {
                 insertUser, Statement.RETURN_GENERATED_KEYS)) {
             ps.setString(1, DEMO_USERNAME);
             ps.setString(2, passwordHash);
-            ps.setString(3, DEMO_FULLNAME);
-            ps.setString(4, DEMO_EMAIL);
-            ps.setString(5, DEMO_PHONE);
-            ps.setString(6, now);
+            ps.setString(3, pinHash);
+            ps.setString(4, DEMO_FULLNAME);
+            ps.setString(5, DEMO_EMAIL);
+            ps.setString(6, DEMO_PHONE);
+            ps.setString(7, now);
             ps.executeUpdate();
 
             try (ResultSet keys = ps.getGeneratedKeys()) {
@@ -86,13 +90,9 @@ public class DatabaseSeeder {
             }
         }
 
-        // ── Generate account number ───────────────────────────────────────────
-        // Seed generator to 141 so next() returns ETH-{year}-00142
-        // matching the account number used across all existing UI demo data
         AccountNumberGenerator.seed(141L);
         String accountNumber = AccountNumberGenerator.next();
 
-        // ── Insert account ────────────────────────────────────────────────────
         String insertAccount = """
             INSERT OR IGNORE INTO accounts
                 (account_number, user_id, account_type, status, balance,
@@ -108,7 +108,48 @@ public class DatabaseSeeder {
             ps.executeUpdate();
         }
 
-        System.out.println("[Seeder] Demo user seeded. Account: " + accountNumber);
+        System.out.println("[Seeder] Demo user seeded. Account: " + accountNumber
+                + "  PIN: " + DEMO_PIN);
+    }
+
+    /**
+     * Backfills pin_hash = hash("1234") for any existing user who has no PIN set.
+     * Runs on every startup after the Phase 6 migration — safe to call repeatedly
+     * because it only updates rows WHERE pin_hash IS NULL.
+     */
+    private void backfillMissingPins() throws SQLException {
+        String defaultPinHash = PasswordUtil.hash("1234");
+        String sql = "UPDATE users SET pin_hash = ? WHERE pin_hash IS NULL";
+        try (PreparedStatement ps = conn.prepareStatement(sql)) {
+            ps.setString(1, defaultPinHash);
+            int updated = ps.executeUpdate();
+            if (updated > 0) {
+                System.out.println("[Seeder] Backfilled PIN for " + updated + " user(s). Default PIN: 1234");
+            }
+        }
+    }
+
+    /**
+     * Sets a PIN for a specific user only if they don't already have one.
+     * Used to upgrade the demo user when the app is run on an existing Phase 5 DB.
+     */
+    private void backfillPinForUser(String username, String plainPin) throws SQLException {
+        String check = "SELECT pin_hash FROM users WHERE username = ?";
+        try (PreparedStatement ps = conn.prepareStatement(check)) {
+            ps.setString(1, username);
+            try (ResultSet rs = ps.executeQuery()) {
+                if (rs.next() && rs.getString("pin_hash") == null) {
+                    String pinHash = PasswordUtil.hash(plainPin);
+                    String update  = "UPDATE users SET pin_hash = ? WHERE username = ?";
+                    try (PreparedStatement up = conn.prepareStatement(update)) {
+                        up.setString(1, pinHash);
+                        up.setString(2, username);
+                        up.executeUpdate();
+                        System.out.println("[Seeder] Set PIN for existing demo user.");
+                    }
+                }
+            }
+        }
     }
 
     /** Seeds the AccountNumberGenerator so new numbers never collide. */
