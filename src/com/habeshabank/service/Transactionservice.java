@@ -259,6 +259,38 @@ public class TransactionService {
         return txRepo.sumAllByType(acctNum, "IDDIR");
     }
 
+    /**
+     * Credits the session account when the user wins an Equb pot.
+     * Called by EqubService after the winner is drawn.
+     */
+    public synchronized Transaction equbPotReceived(double potAmount, String groupName)
+            throws BankingException {
+        validateAmount(potAmount, 0.01, Double.MAX_VALUE, "Equb pot");
+        Account account = resolveSessionAccount();
+        account.credit(potAmount);
+        accountRepo.update(account);
+        Transaction tx = record(TransactionType.TRANSFER_IN, potAmount,
+                account.getBalance(), "Equb pot received – " + groupName, null, account);
+        syncSession(account);
+        return tx;
+    }
+
+    /**
+     * Credits the session account when Iddir funds are distributed to the user.
+     * Called by IddirService after distribution is confirmed.
+     */
+    public synchronized Transaction iddirDistributionReceived(double amount, String occasion)
+            throws BankingException {
+        validateAmount(amount, 0.01, Double.MAX_VALUE, "Iddir distribution");
+        Account account = resolveSessionAccount();
+        account.credit(amount);
+        accountRepo.update(account);
+        Transaction tx = record(TransactionType.TRANSFER_IN, amount,
+                account.getBalance(), "Iddir distribution – " + occasion, null, account);
+        syncSession(account);
+        return tx;
+    }
+
     // ── Private Helpers ───────────────────────────────────────────────────────
 
     /**

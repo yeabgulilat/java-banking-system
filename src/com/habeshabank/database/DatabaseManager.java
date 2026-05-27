@@ -190,6 +190,108 @@ public class DatabaseManager {
                 CREATE INDEX IF NOT EXISTS idx_accounts_user_id
                 ON accounts(user_id)
             """);
+
+            // ── equb_groups (Phase 7) ──────────────────────────────────────────
+            st.execute("""
+                CREATE TABLE IF NOT EXISTS equb_groups (
+                    id                  INTEGER PRIMARY KEY AUTOINCREMENT,
+                    name                TEXT    NOT NULL,
+                    group_code          TEXT    NOT NULL UNIQUE,
+                    contribution_amount REAL    NOT NULL,
+                    total_rounds        INTEGER NOT NULL DEFAULT 0,
+                    current_round       INTEGER NOT NULL DEFAULT 1,
+                    status              TEXT    NOT NULL DEFAULT 'ACTIVE',
+                    created_by          INTEGER NOT NULL,
+                    created_at          TEXT    NOT NULL,
+                    FOREIGN KEY (created_by) REFERENCES users(id)
+                )
+            """);
+
+            // ── equb_members ───────────────────────────────────────────────────
+            st.execute("""
+                CREATE TABLE IF NOT EXISTS equb_members (
+                    id               INTEGER PRIMARY KEY AUTOINCREMENT,
+                    group_id         INTEGER NOT NULL,
+                    user_id          INTEGER NOT NULL,
+                    account_number   TEXT    NOT NULL,
+                    full_name        TEXT    NOT NULL,
+                    has_received_pot INTEGER NOT NULL DEFAULT 0,
+                    joined_at        TEXT    NOT NULL,
+                    UNIQUE(group_id, user_id),
+                    FOREIGN KEY (group_id) REFERENCES equb_groups(id),
+                    FOREIGN KEY (user_id)  REFERENCES users(id)
+                )
+            """);
+
+            // ── equb_rounds ────────────────────────────────────────────────────
+            st.execute("""
+                CREATE TABLE IF NOT EXISTS equb_rounds (
+                    id               INTEGER PRIMARY KEY AUTOINCREMENT,
+                    group_id         INTEGER NOT NULL,
+                    round_number     INTEGER NOT NULL,
+                    winner_user_id   INTEGER NOT NULL DEFAULT 0,
+                    winner_name      TEXT,
+                    pot_amount       REAL    NOT NULL DEFAULT 0,
+                    contributions_in INTEGER NOT NULL DEFAULT 0,
+                    status           TEXT    NOT NULL DEFAULT 'OPEN',
+                    due_date         TEXT,
+                    paid_at          TEXT,
+                    FOREIGN KEY (group_id) REFERENCES equb_groups(id)
+                )
+            """);
+
+            // ── iddir_groups ───────────────────────────────────────────────────
+            st.execute("""
+                CREATE TABLE IF NOT EXISTS iddir_groups (
+                    id               INTEGER PRIMARY KEY AUTOINCREMENT,
+                    name             TEXT    NOT NULL,
+                    group_code       TEXT    NOT NULL UNIQUE,
+                    monthly_amount   REAL    NOT NULL,
+                    created_by       INTEGER NOT NULL,
+                    created_at       TEXT    NOT NULL,
+                    FOREIGN KEY (created_by) REFERENCES users(id)
+                )
+            """);
+
+            // ── iddir_members ──────────────────────────────────────────────────
+            st.execute("""
+                CREATE TABLE IF NOT EXISTS iddir_members (
+                    id             INTEGER PRIMARY KEY AUTOINCREMENT,
+                    group_id       INTEGER NOT NULL,
+                    user_id        INTEGER NOT NULL,
+                    account_number TEXT    NOT NULL,
+                    full_name      TEXT    NOT NULL,
+                    joined_at      TEXT    NOT NULL,
+                    UNIQUE(group_id, user_id),
+                    FOREIGN KEY (group_id) REFERENCES iddir_groups(id),
+                    FOREIGN KEY (user_id)  REFERENCES users(id)
+                )
+            """);
+
+            // ── iddir_events ───────────────────────────────────────────────────
+            st.execute("""
+                CREATE TABLE IF NOT EXISTS iddir_events (
+                    id                 INTEGER PRIMARY KEY AUTOINCREMENT,
+                    group_id           INTEGER NOT NULL,
+                    beneficiary_name   TEXT    NOT NULL,
+                    occasion           TEXT    NOT NULL,
+                    requested_amount   REAL    NOT NULL,
+                    total_collected    REAL    NOT NULL DEFAULT 0,
+                    contribution_count INTEGER NOT NULL DEFAULT 0,
+                    status             TEXT    NOT NULL DEFAULT 'PENDING',
+                    created_by         INTEGER NOT NULL,
+                    created_at         TEXT    NOT NULL,
+                    distributed_at     TEXT,
+                    FOREIGN KEY (group_id)  REFERENCES iddir_groups(id),
+                    FOREIGN KEY (created_by) REFERENCES users(id)
+                )
+            """);
+
+            // ── indexes for Equb/Iddir ─────────────────────────────────────────
+            st.execute("CREATE INDEX IF NOT EXISTS idx_equb_members_user ON equb_members(user_id)");
+            st.execute("CREATE INDEX IF NOT EXISTS idx_equb_rounds_group ON equb_rounds(group_id)");
+            st.execute("CREATE INDEX IF NOT EXISTS idx_iddir_members_user ON iddir_members(user_id)");
+            st.execute("CREATE INDEX IF NOT EXISTS idx_iddir_events_group ON iddir_events(group_id)");
         }
     }
 
