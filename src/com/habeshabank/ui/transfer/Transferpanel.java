@@ -271,7 +271,8 @@ public class TransferPanel extends JPanel implements Refreshable {
                     "Transfer Sent", JOptionPane.INFORMATION_MESSAGE);
 
             clearForm();
-            mainFrame.refreshAllUI();   // sync dashboard + history
+            mainFrame.refreshAllUI();
+            mainFrame.resetSessionTimeout();
 
         } catch (BankingException ex) {
             showError(ex.getMessage());

@@ -2,6 +2,8 @@ package com.habeshabank.ui.dashboard;
 
 import com.habeshabank.model.Transaction;
 import com.habeshabank.model.UserSession;
+import com.habeshabank.service.TransactionService;
+import com.habeshabank.ui.Refreshable;
 import com.habeshabank.ui.components.*;
 import com.habeshabank.ui.theme.HabeshaTheme;
 
@@ -14,16 +16,34 @@ import java.time.format.DateTimeFormatter;
 import java.util.List;
 
 /**
- * Home dashboard showing account summary, stat cards, and recent transactions.
+ * Home dashboard — fully reactive.
+ *
+ * Phase 3 changes
+ * ───────────────
+ * • Implements {@link Refreshable}; MainFrame calls refreshData() after every
+ *   transaction and on every navigation to this panel.
+ * • loadDemoData() removed entirely — all values come from UserSession and
+ *   TransactionService.
+ * • refreshData() updates all four stat cards and reloads the recent-
+ *   transactions table from live service data.
+ * • Layout, styling, component structure: identical to Phase 1/2.
  */
-public class DashboardPanel extends JPanel {
+public class DashboardPanel extends JPanel implements Refreshable {
 
     private final MainFrame mainFrame;
+    private final TransactionService txService = TransactionService.getInstance();
+
+    // Stat cards — kept as fields so refreshData() can call setValue()
     private StatCard balanceCard;
     private StatCard depositCard;
     private StatCard withdrawCard;
     private StatCard equbCard;
+
+    // Table model — kept as field so refreshData() can reload rows
     private DefaultTableModel recentTableModel;
+
+    private static final DateTimeFormatter FMT =
+            DateTimeFormatter.ofPattern("dd MMM yyyy  HH:mm");
 
     public DashboardPanel(MainFrame mainFrame) {
         this.mainFrame = mainFrame;
@@ -32,8 +52,68 @@ public class DashboardPanel extends JPanel {
         setLayout(new BorderLayout());
 
         add(buildScrollableContent(), BorderLayout.CENTER);
-        loadDemoData();
+
+        // Initial population from live data (no hardcoded values)
+        refreshData();
     }
+
+    // ── Refreshable implementation ────────────────────────────────────────────
+
+    /**
+     * Pulls current values from UserSession and TransactionService and pushes
+     * them into every live-data component on this panel.
+     * Safe to call repeatedly from the EDT.
+     */
+    @Override
+    public void refreshData() {
+        UserSession session = UserSession.getInstance();
+
+        // ── Stat cards ──────────────────────────────────────────────────────
+        balanceCard.setValue(String.format("%,.2f ETB", session.getBalance()));
+        balanceCard.setSubtitle("Available funds");
+
+        double deposits = txService.getTotalDepositsThisMonth();
+        depositCard.setValue(deposits > 0
+                ? String.format("%,.2f ETB", deposits)
+                : "0.00 ETB");
+        depositCard.setSubtitle("This month");
+
+        double withdrawals = txService.getTotalWithdrawalsThisMonth();
+        withdrawCard.setValue(withdrawals > 0
+                ? String.format("%,.2f ETB", withdrawals)
+                : "0.00 ETB");
+        withdrawCard.setSubtitle("This month");
+
+        long equbCount = txService.getEqubContributionCount();
+        equbCard.setValue(equbCount > 0 ? String.valueOf(equbCount) : "0");
+        equbCard.setSubtitle(equbCount == 1 ? "contribution" : "contributions");
+
+        // ── Recent transactions table ───────────────────────────────────────
+        recentTableModel.setRowCount(0);   // clear without recreating the model
+
+        List<Transaction> recent = txService.getRecentTransactions(8);
+        if (recent.isEmpty()) {
+            // Empty state — single muted row so the table doesn't look broken
+            recentTableModel.addRow(new Object[]{
+                    "—", "No transactions yet", "—", "—", "—"
+            });
+        } else {
+            for (Transaction tx : recent) {
+                recentTableModel.addRow(new Object[]{
+                        tx.formattedTimestamp(),
+                        tx.getDescription(),
+                        tx.getType().name().replace("_", " "),
+                        tx.signedAmount(),
+                        String.format("%,.2f ETB", tx.getBalanceAfter())
+                });
+            }
+        }
+
+        // Repaint so StatCard custom painting picks up new text
+        repaint();
+    }
+
+    // ── Layout (identical to Phase 1) ─────────────────────────────────────────
 
     private JScrollPane buildScrollableContent() {
         JPanel content = new JPanel();
@@ -57,8 +137,6 @@ public class DashboardPanel extends JPanel {
         return scroll;
     }
 
-    // ── Page Header ───────────────────────────────────────────────────────────
-
     private JPanel buildPageHeader() {
         JPanel panel = new JPanel(new BorderLayout());
         panel.setOpaque(false);
@@ -81,11 +159,8 @@ public class DashboardPanel extends JPanel {
         left.add(Box.createVerticalStrut(4));
         left.add(dateLabel);
 
-        // Account badge
-        JPanel badge = buildAccountBadge(session);
-
-        panel.add(left,  BorderLayout.WEST);
-        panel.add(badge, BorderLayout.EAST);
+        panel.add(left,                       BorderLayout.WEST);
+        panel.add(buildAccountBadge(session), BorderLayout.EAST);
         return panel;
     }
 
@@ -122,16 +197,15 @@ public class DashboardPanel extends JPanel {
         return badge;
     }
 
-    // ── Stat Cards ────────────────────────────────────────────────────────────
-
     private JPanel buildStatCards() {
         JPanel grid = new JPanel(new GridLayout(1, 4, 16, 0));
         grid.setOpaque(false);
 
-        balanceCard  = new StatCard("Current Balance",    "—",     "Available funds",    HabeshaTheme.GOLD_PRIMARY);
-        depositCard  = new StatCard("Total Deposits",     "—",     "This month",          HabeshaTheme.GREEN_SUCCESS);
-        withdrawCard = new StatCard("Total Withdrawals",  "—",     "This month",          HabeshaTheme.RED_DANGER);
-        equbCard     = new StatCard("Equb Contributions", "—",     "Active rounds",       HabeshaTheme.BLUE_INFO);
+        // Initialised with "—" placeholders; refreshData() fills real values immediately
+        balanceCard  = new StatCard("Current Balance",    "—", "Available funds",   HabeshaTheme.GOLD_PRIMARY);
+        depositCard  = new StatCard("Total Deposits",     "—", "This month",         HabeshaTheme.GREEN_SUCCESS);
+        withdrawCard = new StatCard("Total Withdrawals",  "—", "This month",         HabeshaTheme.RED_DANGER);
+        equbCard     = new StatCard("Equb Contributions", "—", "Active rounds",      HabeshaTheme.BLUE_INFO);
 
         grid.add(balanceCard);
         grid.add(depositCard);
@@ -140,8 +214,6 @@ public class DashboardPanel extends JPanel {
 
         return grid;
     }
-
-    // ── Quick Actions ─────────────────────────────────────────────────────────
 
     private JPanel buildQuickActions() {
         JPanel section = new JPanel();
@@ -159,12 +231,12 @@ public class DashboardPanel extends JPanel {
         buttonRow.setOpaque(false);
 
         String[][] actions = {
-                { "↓  Deposit",       MainFrame.PAGE_DEPOSIT   },
-                { "↑  Withdraw",      MainFrame.PAGE_WITHDRAW  },
-                { "⇌  Transfer",      MainFrame.PAGE_TRANSFER  },
-                { "◎  Equb",          MainFrame.PAGE_EQUB      },
-                { "♦  Iddir",         MainFrame.PAGE_IDDIR     },
-                { "≡  History",       MainFrame.PAGE_HISTORY   },
+                { "↓  Deposit",   MainFrame.PAGE_DEPOSIT  },
+                { "↑  Withdraw",  MainFrame.PAGE_WITHDRAW },
+                { "⇌  Transfer",  MainFrame.PAGE_TRANSFER },
+                { "◎  Equb",      MainFrame.PAGE_EQUB     },
+                { "♦  Iddir",     MainFrame.PAGE_IDDIR    },
+                { "≡  History",   MainFrame.PAGE_HISTORY  },
         };
 
         for (String[] action : actions) {
@@ -181,13 +253,10 @@ public class DashboardPanel extends JPanel {
         return section;
     }
 
-    // ── Recent Transactions ───────────────────────────────────────────────────
-
     private JPanel buildRecentTransactions() {
         JPanel section = new JPanel(new BorderLayout());
         section.setOpaque(false);
 
-        // Header row
         JPanel header = new JPanel(new BorderLayout());
         header.setOpaque(false);
         header.setBorder(BorderFactory.createEmptyBorder(0, 0, 12, 0));
@@ -203,7 +272,6 @@ public class DashboardPanel extends JPanel {
         header.add(viewAll, BorderLayout.EAST);
         section.add(header, BorderLayout.NORTH);
 
-        // Table
         String[] cols = { "Date", "Description", "Type", "Amount", "Balance" };
         recentTableModel = new DefaultTableModel(cols, 0) {
             @Override public boolean isCellEditable(int r, int c) { return false; }
@@ -221,7 +289,7 @@ public class DashboardPanel extends JPanel {
         table.getTableHeader().setForeground(HabeshaTheme.GOLD_PRIMARY);
         table.getTableHeader().setBorder(BorderFactory.createEmptyBorder());
 
-        // Amount column coloring
+        // Amount column — green for credits, red for debits
         table.getColumnModel().getColumn(3).setCellRenderer(new DefaultTableCellRenderer() {
             @Override public Component getTableCellRendererComponent(
                     JTable t, Object val, boolean sel, boolean foc, int row, int col) {
@@ -233,12 +301,10 @@ public class DashboardPanel extends JPanel {
             }
         });
 
-        // Balance column right-align
         DefaultTableCellRenderer rightAlign = new DefaultTableCellRenderer();
         rightAlign.setHorizontalAlignment(SwingConstants.RIGHT);
         table.getColumnModel().getColumn(4).setCellRenderer(rightAlign);
 
-        // Column widths
         int[] widths = { 140, 260, 120, 120, 130 };
         for (int i = 0; i < widths.length; i++) {
             table.getColumnModel().getColumn(i).setPreferredWidth(widths[i]);
@@ -253,33 +319,7 @@ public class DashboardPanel extends JPanel {
         return section;
     }
 
-    // ── Demo Data ─────────────────────────────────────────────────────────────
-
-    private void loadDemoData() {
-        UserSession session = UserSession.getInstance();
-
-        balanceCard.setValue(String.format("%.2f ETB", session.getBalance()));
-        balanceCard.setSubtitle("Last updated: today");
-        depositCard.setValue("12,400.00");
-        withdrawCard.setValue("3,200.00");
-        equbCard.setValue("2 Active");
-
-        // Demo recent transactions
-        DateTimeFormatter fmt = DateTimeFormatter.ofPattern("dd MMM yyyy  HH:mm");
-        Object[][] rows = {
-                { LocalDateTime.now().minusHours(2).format(fmt), "Deposit – Cash", "DEPOSIT",
-                        "+5,000.00 ETB",  "47,850.00 ETB" },
-                { LocalDateTime.now().minusDays(1).format(fmt),  "Transfer to Kaleb Girma", "TRANSFER",
-                        "-2,500.00 ETB",  "42,850.00 ETB" },
-                { LocalDateTime.now().minusDays(2).format(fmt),  "Equb Round #7 Contribution", "EQUB",
-                        "-500.00 ETB",    "45,350.00 ETB" },
-                { LocalDateTime.now().minusDays(3).format(fmt),  "ATM Withdrawal – Bole", "WITHDRAWAL",
-                        "-700.00 ETB",    "45,850.00 ETB" },
-                { LocalDateTime.now().minusDays(5).format(fmt),  "Salary Credit", "DEPOSIT",
-                        "+10,000.00 ETB", "46,550.00 ETB" },
-        };
-        for (Object[] row : rows) recentTableModel.addRow(row);
-    }
+    // ── Helpers ───────────────────────────────────────────────────────────────
 
     private String timeOfDay() {
         int hour = LocalDateTime.now().getHour();

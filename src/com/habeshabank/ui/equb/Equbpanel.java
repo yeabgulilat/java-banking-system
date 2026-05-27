@@ -260,7 +260,8 @@ public class EqubPanel extends JPanel implements Refreshable {
                             amount, tx.getReferenceNumber()),
                     "Contribution Successful", JOptionPane.INFORMATION_MESSAGE);
 
-            mainFrame.refreshAllUI();   // sync dashboard + history
+            mainFrame.refreshAllUI();
+            mainFrame.resetSessionTimeout();
 
         } catch (NumberFormatException ex) {
             showError("Invalid amount.");

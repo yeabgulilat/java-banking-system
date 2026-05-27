@@ -1,5 +1,8 @@
 package com.habeshabank.ui.history;
 
+import com.habeshabank.model.Transaction;
+import com.habeshabank.service.TransactionService;
+import com.habeshabank.ui.Refreshable;
 import com.habeshabank.ui.components.*;
 import com.habeshabank.ui.dashboard.MainFrame;
 import com.habeshabank.ui.theme.HabeshaTheme;
@@ -8,22 +11,29 @@ import javax.swing.*;
 import javax.swing.table.DefaultTableCellRenderer;
 import javax.swing.table.DefaultTableModel;
 import java.awt.*;
-import java.time.LocalDateTime;
-import java.time.format.DateTimeFormatter;
+import java.util.List;
 
 /**
- * Transaction history panel with search/filter capabilities.
- * Data is demo — database wiring comes later.
+ * Transaction history panel — fully reactive.
+ *
+ * Phase 3 changes
+ * ───────────────
+ * • Implements {@link Refreshable}; refreshData() clears and reloads the table
+ *   from TransactionService on every call.
+ * • loadDemoTransactions() removed — hardcoded rows replaced by live data.
+ * • Filter button now performs a real in-memory search/filter against the
+ *   live transaction list (description keyword + type).
+ * • All layout, styling, column renderers, and header unchanged from Phase 1/2.
  */
-public class TransactionHistoryPanel extends JPanel {
+public class TransactionHistoryPanel extends JPanel implements Refreshable {
 
     private final MainFrame mainFrame;
-    private DefaultTableModel tableModel;
-    private JTextField searchField;
-    private JComboBox<String> typeFilter;
+    private final TransactionService txService = TransactionService.getInstance();
 
-    private static final DateTimeFormatter FMT =
-            DateTimeFormatter.ofPattern("dd MMM yyyy  HH:mm");
+    private DefaultTableModel tableModel;
+    private JTextField        searchField;
+    private JComboBox<String> typeFilter;
+    private JComboBox<String> monthFilter;
 
     public TransactionHistoryPanel(MainFrame mainFrame) {
         this.mainFrame = mainFrame;
@@ -31,27 +41,65 @@ public class TransactionHistoryPanel extends JPanel {
         setBackground(HabeshaTheme.BLACK_DEEP);
         setLayout(new BorderLayout());
         add(buildContent(), BorderLayout.CENTER);
+
+        // Load live data on construction
+        refreshData();
     }
+
+    // ── Refreshable ───────────────────────────────────────────────────────────
+
+    /**
+     * Reloads the table from TransactionService with no filters applied.
+     * Resets filter controls to "All" so the user sees the complete list.
+     */
+    @Override
+    public void refreshData() {
+        if (searchField  != null) searchField.setText("");
+        if (typeFilter   != null) typeFilter.setSelectedIndex(0);
+        if (monthFilter  != null) monthFilter.setSelectedIndex(0);
+        populateTable(txService.getTransactionHistory());
+    }
+
+    /** Replaces all table rows with the supplied transaction list. */
+    private void populateTable(List<Transaction> transactions) {
+        if (tableModel == null) return;
+        tableModel.setRowCount(0);
+        if (transactions.isEmpty()) {
+            tableModel.addRow(new Object[]{
+                    "—", "—", "No transactions found", "—", "—", "—"
+            });
+            return;
+        }
+        for (Transaction tx : transactions) {
+            tableModel.addRow(new Object[]{
+                    tx.getReferenceNumber(),
+                    tx.formattedTimestamp(),
+                    tx.getDescription(),
+                    tx.getType().name().replace("_", " "),
+                    tx.signedAmount(),
+                    String.format("%,.2f ETB", tx.getBalanceAfter())
+            });
+        }
+    }
+
+    // ── Layout (structure identical to Phase 1) ───────────────────────────────
 
     private JPanel buildContent() {
         JPanel content = new JPanel(new BorderLayout());
         content.setOpaque(false);
         content.setBorder(BorderFactory.createEmptyBorder(28, 32, 28, 32));
 
-        content.add(buildPageHeader(),  BorderLayout.NORTH);
-        content.add(buildFilterBar(),   BorderLayout.CENTER);
-
-        // Table placed via wrapper
         JPanel tableWrapper = new JPanel(new BorderLayout());
         tableWrapper.setOpaque(false);
         tableWrapper.add(buildTransactionTable(), BorderLayout.CENTER);
 
         JPanel mid = new JPanel(new BorderLayout());
         mid.setOpaque(false);
-        mid.add(buildFilterBar(),  BorderLayout.NORTH);
-        mid.add(tableWrapper,      BorderLayout.CENTER);
+        mid.add(buildFilterBar(), BorderLayout.NORTH);
+        mid.add(tableWrapper,    BorderLayout.CENTER);
 
-        content.add(mid, BorderLayout.CENTER);
+        content.add(buildPageHeader(), BorderLayout.NORTH);
+        content.add(mid,               BorderLayout.CENTER);
         return content;
     }
 
@@ -90,7 +138,6 @@ public class TransactionHistoryPanel extends JPanel {
         JPanel bar = new JPanel(new FlowLayout(FlowLayout.LEFT, 12, 8));
         bar.setOpaque(false);
 
-        // Search box
         searchField = new JTextField(20);
         searchField.setFont(HabeshaTheme.FONT_BODY);
         searchField.setBackground(HabeshaTheme.BLACK_CARD);
@@ -102,33 +149,28 @@ public class TransactionHistoryPanel extends JPanel {
         searchField.setPreferredSize(new Dimension(220, 36));
         bar.add(searchField);
 
-        // Type filter
-        String[] types = { "All Types", "Deposit", "Withdrawal", "Transfer In", "Transfer Out", "Equb", "Iddir" };
+        String[] types = { "All Types", "DEPOSIT", "WITHDRAWAL", "TRANSFER IN",
+                "TRANSFER OUT", "EQUB", "IDDIR" };
         typeFilter = new JComboBox<>(types);
         typeFilter.setFont(HabeshaTheme.FONT_BODY);
         typeFilter.setPreferredSize(new Dimension(150, 36));
         bar.add(typeFilter);
 
-        // Date range combos
         String[] months = { "All Months", "Jan", "Feb", "Mar", "Apr", "May", "Jun",
                 "Jul", "Aug", "Sep", "Oct", "Nov", "Dec" };
-        JComboBox<String> monthFilter = new JComboBox<>(months);
+        monthFilter = new JComboBox<>(months);
         monthFilter.setFont(HabeshaTheme.FONT_BODY);
         monthFilter.setPreferredSize(new Dimension(120, 36));
         bar.add(monthFilter);
 
-        GoldButton searchBtn = new GoldButton("Filter");
-        searchBtn.setPreferredSize(new Dimension(90, 36));
-        searchBtn.addActionListener(e -> applyFilter());
-        bar.add(searchBtn);
+        GoldButton filterBtn = new GoldButton("Filter");
+        filterBtn.setPreferredSize(new Dimension(90, 36));
+        filterBtn.addActionListener(e -> applyFilter());
+        bar.add(filterBtn);
 
         GoldButton clearBtn = new GoldButton("Clear", GoldButton.Style.OUTLINE);
         clearBtn.setPreferredSize(new Dimension(80, 36));
-        clearBtn.addActionListener(e -> {
-            searchField.setText("");
-            typeFilter.setSelectedIndex(0);
-            monthFilter.setSelectedIndex(0);
-        });
+        clearBtn.addActionListener(e -> refreshData());
         bar.add(clearBtn);
 
         return bar;
@@ -139,8 +181,6 @@ public class TransactionHistoryPanel extends JPanel {
         tableModel = new DefaultTableModel(cols, 0) {
             @Override public boolean isCellEditable(int r, int c) { return false; }
         };
-
-        loadDemoTransactions();
 
         JTable table = new JTable(tableModel);
         table.setRowHeight(42);
@@ -156,7 +196,7 @@ public class TransactionHistoryPanel extends JPanel {
         table.getTableHeader().setForeground(HabeshaTheme.GOLD_PRIMARY);
         table.getTableHeader().setReorderingAllowed(false);
 
-        // Amount coloring
+        // Amount coloring (col 4)
         table.getColumnModel().getColumn(4).setCellRenderer(new DefaultTableCellRenderer() {
             @Override public Component getTableCellRendererComponent(
                     JTable t, Object val, boolean sel, boolean foc, int row, int col) {
@@ -169,13 +209,13 @@ public class TransactionHistoryPanel extends JPanel {
             }
         });
 
-        // Right-align balance
+        // Balance right-align (col 5)
         DefaultTableCellRenderer rightAlign = new DefaultTableCellRenderer();
         rightAlign.setHorizontalAlignment(SwingConstants.RIGHT);
         table.getColumnModel().getColumn(5).setCellRenderer(rightAlign);
 
-        // Monospace ref column
-        DefaultTableCellRenderer monoRend = new DefaultTableCellRenderer() {
+        // Ref # monospace + gold (col 0)
+        table.getColumnModel().getColumn(0).setCellRenderer(new DefaultTableCellRenderer() {
             @Override public Component getTableCellRendererComponent(
                     JTable t, Object val, boolean sel, boolean foc, int row, int col) {
                 JLabel lbl = (JLabel) super.getTableCellRendererComponent(t, val, sel, foc, row, col);
@@ -183,8 +223,7 @@ public class TransactionHistoryPanel extends JPanel {
                 lbl.setForeground(HabeshaTheme.GOLD_MUTED);
                 return lbl;
             }
-        };
-        table.getColumnModel().getColumn(0).setCellRenderer(monoRend);
+        });
 
         int[] widths = { 120, 150, 240, 110, 120, 130 };
         for (int i = 0; i < widths.length; i++) table.getColumnModel().getColumn(i).setPreferredWidth(widths[i]);
@@ -196,26 +235,43 @@ public class TransactionHistoryPanel extends JPanel {
         return scroll;
     }
 
-    private void loadDemoTransactions() {
-        Object[][] rows = {
-                { "HB892341234", LocalDateTime.now().minusHours(2).format(FMT),   "Cash Deposit",                "DEPOSIT",     "+5,000.00 ETB",  "47,850.00 ETB" },
-                { "HB881200045", LocalDateTime.now().minusDays(1).format(FMT),    "Transfer to Kaleb Girma",    "TRANSFER OUT","-2,500.00 ETB",  "42,850.00 ETB" },
-                { "HB871905561", LocalDateTime.now().minusDays(2).format(FMT),    "Equb Round #7",              "EQUB",        "-500.00 ETB",    "45,350.00 ETB" },
-                { "HB860044209", LocalDateTime.now().minusDays(3).format(FMT),    "ATM Withdrawal – Bole",      "WITHDRAWAL",  "-700.00 ETB",    "45,850.00 ETB" },
-                { "HB851133871", LocalDateTime.now().minusDays(5).format(FMT),    "Salary Credit – Ethio Telecom","DEPOSIT",   "+10,000.00 ETB", "46,550.00 ETB" },
-                { "HB840098234", LocalDateTime.now().minusDays(6).format(FMT),    "Iddir Contribution – Round 3","IDDIR",      "-300.00 ETB",    "36,550.00 ETB" },
-                { "HB831000892", LocalDateTime.now().minusDays(8).format(FMT),    "Transfer from Meron Tadesse","TRANSFER IN", "+3,000.00 ETB",  "36,850.00 ETB" },
-                { "HB820765401", LocalDateTime.now().minusDays(10).format(FMT),   "ATM Withdrawal – Piassa",    "WITHDRAWAL",  "-1,500.00 ETB",  "33,850.00 ETB" },
-                { "HB810234789", LocalDateTime.now().minusDays(12).format(FMT),   "Cash Deposit",               "DEPOSIT",     "+8,000.00 ETB",  "35,350.00 ETB" },
-                { "HB800456123", LocalDateTime.now().minusDays(14).format(FMT),   "Equb Round #6",              "EQUB",        "-500.00 ETB",    "27,350.00 ETB" },
-        };
-        for (Object[] row : rows) tableModel.addRow(row);
-    }
+    // ── Filter logic ──────────────────────────────────────────────────────────
 
+    /**
+     * Filters the live transaction list by keyword and/or type and reloads the table.
+     * All matching is case-insensitive. An empty keyword or "All Types" matches everything.
+     */
     private void applyFilter() {
-        // Filter logic will be implemented with data layer
-        JOptionPane.showMessageDialog(this,
-                "Advanced filtering will be wired to the database layer.",
-                "Filter", JOptionPane.INFORMATION_MESSAGE);
+        String keyword   = searchField.getText().trim().toLowerCase();
+        String typeStr   = typeFilter.getSelectedIndex() == 0
+                ? ""
+                : ((String) typeFilter.getSelectedItem()).replace(" ", "_");
+        int    monthIdx  = monthFilter.getSelectedIndex(); // 0 = all, 1-12 = Jan-Dec
+
+        List<Transaction> all = txService.getTransactionHistory();
+
+        List<Transaction> filtered = all.stream()
+                .filter(tx -> {
+                    // keyword match against description or reference
+                    if (!keyword.isEmpty()) {
+                        String desc = tx.getDescription() != null
+                                ? tx.getDescription().toLowerCase() : "";
+                        String ref  = tx.getReferenceNumber() != null
+                                ? tx.getReferenceNumber().toLowerCase() : "";
+                        if (!desc.contains(keyword) && !ref.contains(keyword)) return false;
+                    }
+                    // type match
+                    if (!typeStr.isEmpty()) {
+                        if (!tx.getType().name().equalsIgnoreCase(typeStr)) return false;
+                    }
+                    // month match
+                    if (monthIdx > 0 && tx.getTimestamp() != null) {
+                        if (tx.getTimestamp().getMonthValue() != monthIdx) return false;
+                    }
+                    return true;
+                })
+                .toList();
+
+        populateTable(filtered);
     }
 }

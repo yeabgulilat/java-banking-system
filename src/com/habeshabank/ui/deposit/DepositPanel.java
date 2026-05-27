@@ -248,7 +248,8 @@ public class DepositPanel extends JPanel implements Refreshable {
                     "Deposit Successful", JOptionPane.INFORMATION_MESSAGE);
 
             clearForm();
-            mainFrame.refreshAllUI();   // sync dashboard + history
+            mainFrame.refreshAllUI();
+            mainFrame.resetSessionTimeout();
 
         } catch (BankingException ex) {
             showError(ex.getMessage());

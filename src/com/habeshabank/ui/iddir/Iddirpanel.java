@@ -251,7 +251,8 @@ public class IddirPanel extends JPanel implements Refreshable {
                     "Contribution Recorded", JOptionPane.INFORMATION_MESSAGE);
 
             clearForm();
-            mainFrame.refreshAllUI();   // sync dashboard + history
+            mainFrame.refreshAllUI();
+            mainFrame.resetSessionTimeout();
 
         } catch (NumberFormatException ex) {
             showError("Invalid amount.");
