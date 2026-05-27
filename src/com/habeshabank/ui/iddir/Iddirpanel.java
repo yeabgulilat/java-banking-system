@@ -96,19 +96,22 @@ public class IddirPanel extends JPanel implements Refreshable {
         content.setLayout(new BoxLayout(content, BoxLayout.Y_AXIS));
         content.setBorder(BorderFactory.createEmptyBorder(28, 32, 28, 32));
 
-        content.add(buildPageHeader());
+        content.add(fullWidth(buildPageHeader()));
         content.add(Box.createVerticalStrut(24));
 
         JPanel columns = new JPanel(new GridLayout(1, 2, 24, 0));
         columns.setOpaque(false);
         columns.add(buildFormCard());
         columns.add(buildStatusPanel());
+        columns.setAlignmentX(Component.LEFT_ALIGNMENT);
+        columns.setMaximumSize(new Dimension(Integer.MAX_VALUE, 420));
+        columns.setPreferredSize(new Dimension(1000, 420));
         content.add(columns);
 
         content.add(Box.createVerticalStrut(24));
-        content.add(buildEventTableSection());
+        content.add(fullWidth(buildEventTableSection()));
         content.add(Box.createVerticalStrut(24));
-        content.add(buildGroupActionBar());
+        content.add(fullWidth(buildGroupActionBar()));
 
         JScrollPane scroll = new JScrollPane(content);
         scroll.setOpaque(false);
@@ -147,6 +150,7 @@ public class IddirPanel extends JPanel implements Refreshable {
         JPanel card = new SectionPanel("", null);
         card.setLayout(new BoxLayout(card, BoxLayout.Y_AXIS));
         card.setBorder(BorderFactory.createEmptyBorder(24, 24, 24, 24));
+        card.setPreferredSize(new Dimension(500, 420));
 
         JLabel formTitle = new JLabel("Report New Event");
         formTitle.setFont(HabeshaTheme.FONT_HEADING);
@@ -242,6 +246,8 @@ public class IddirPanel extends JPanel implements Refreshable {
         myContribCard.setAlignmentX(Component.LEFT_ALIGNMENT);
         myContribCard.setMaximumSize(new Dimension(Integer.MAX_VALUE, 120));
         panel.add(myContribCard);
+        panel.add(Box.createVerticalGlue());
+        panel.setPreferredSize(new Dimension(380, 420));
 
         return panel;
     }
@@ -512,5 +518,12 @@ public class IddirPanel extends JPanel implements Refreshable {
 
     private void showError(String msg) {
         JOptionPane.showMessageDialog(this, msg, "Error", JOptionPane.WARNING_MESSAGE);
+    }
+
+    private <T extends JComponent> T fullWidth(T component) {
+        component.setAlignmentX(Component.LEFT_ALIGNMENT);
+        Dimension pref = component.getPreferredSize();
+        component.setMaximumSize(new Dimension(Integer.MAX_VALUE, pref.height));
+        return component;
     }
 }

@@ -76,13 +76,13 @@ public class EqubPanel extends JPanel implements Refreshable {
         content.setLayout(new BoxLayout(content, BoxLayout.Y_AXIS));
         content.setBorder(BorderFactory.createEmptyBorder(28, 32, 28, 32));
 
-        content.add(buildPageHeader());
+        content.add(fullWidth(buildPageHeader()));
         content.add(Box.createVerticalStrut(24));
-        content.add(buildGroupCardsSection());
+        content.add(fullWidth(buildGroupCardsSection()));
         content.add(Box.createVerticalStrut(24));
-        content.add(buildRoundHistorySection());
+        content.add(fullWidth(buildRoundHistorySection()));
         content.add(Box.createVerticalStrut(24));
-        content.add(buildActionBar());
+        content.add(fullWidth(buildActionBar()));
 
         JScrollPane scroll = new JScrollPane(content);
         scroll.setOpaque(false);
@@ -555,5 +555,12 @@ public class EqubPanel extends JPanel implements Refreshable {
                 "Error",
                 JOptionPane.WARNING_MESSAGE
         );
+    }
+
+    private <T extends JComponent> T fullWidth(T component) {
+        component.setAlignmentX(Component.LEFT_ALIGNMENT);
+        Dimension pref = component.getPreferredSize();
+        component.setMaximumSize(new Dimension(Integer.MAX_VALUE, pref.height));
+        return component;
     }
 }

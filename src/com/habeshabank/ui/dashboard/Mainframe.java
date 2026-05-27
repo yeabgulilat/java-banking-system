@@ -46,6 +46,7 @@ public class MainFrame extends JFrame {
     public static final String PAGE_SETTINGS  = "settings";   // Phase 6
 
     private final List<NavButton>         navButtons   = new ArrayList<>();
+    private final Map<NavButton, String>  navButtonPageKeys = new HashMap<>();
     private final CardLayout              cardLayout   = new CardLayout();
     private final JPanel                  contentArea  = new JPanel(cardLayout);
     private final Map<String, Component>  panelsByKey  = new HashMap<>();
@@ -211,6 +212,7 @@ public class MainFrame extends JFrame {
         NavButton btn = new NavButton(icon, label);
         btn.setOnClick(() -> navigateTo(pageKey));
         navButtons.add(btn);
+        navButtonPageKeys.put(btn, pageKey);
         return btn;
     }
 
@@ -262,6 +264,7 @@ public class MainFrame extends JFrame {
     public void navigateTo(String pageKey) {
         activePage = pageKey;
         cardLayout.show(contentArea, pageKey);
+        sessionTimeout.resetTimer();
 
         // Refresh the panel being shown so it always has current data
         Component panel = panelsByKey.get(pageKey);
@@ -278,11 +281,7 @@ public class MainFrame extends JFrame {
     }
 
     private boolean matchesPage(NavButton btn, String pageKey) {
-        String[] pages = { PAGE_DASHBOARD, PAGE_DEPOSIT, PAGE_WITHDRAW,
-                PAGE_TRANSFER, PAGE_HISTORY, PAGE_EQUB,
-                PAGE_IDDIR, PAGE_SETTINGS };
-        int idx = navButtons.indexOf(btn);
-        return idx >= 0 && idx < pages.length && pages[idx].equals(pageKey);
+        return pageKey.equals(navButtonPageKeys.get(btn));
     }
 
     // ── Session Timeout ───────────────────────────────────────────────────────
